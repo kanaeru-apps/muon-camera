@@ -1069,6 +1069,28 @@ if (useNativeCam && CameraPreview.addListener) {
   });
 }
 
-initCamera();
-// Apply initial ratio box size after first layout paint
-requestAnimationFrame(() => requestAnimationFrame(applyRatioBox));
+// ガイドライン2.5.14対応: 初回起動時に「撮影表示は無効化できない・通常時は
+// シャッター音が鳴る・マナーモード時は端末設定に従う」ことを明示し同意を得る。
+// 同意後にカメラを起動する(=カメラ権限ダイアログも同意後に出る)。
+const USAGE_NOTICE_KEY = 'zerocam-usage-notice-v1';
+
+function startCamera() {
+  initCamera();
+  // Apply initial ratio box size after first layout paint
+  requestAnimationFrame(() => requestAnimationFrame(applyRatioBox));
+}
+
+let noticeAccepted = false;
+try { noticeAccepted = !!localStorage.getItem(USAGE_NOTICE_KEY); } catch (e) {}
+
+if (noticeAccepted) {
+  startCamera();
+} else {
+  const noticeEl = document.getElementById('first-launch-notice');
+  noticeEl.classList.remove('hidden');
+  document.getElementById('first-launch-ok').addEventListener('click', () => {
+    try { localStorage.setItem(USAGE_NOTICE_KEY, '1'); } catch (e) {}
+    noticeEl.classList.add('hidden');
+    startCamera();
+  }, { once: true });
+}
