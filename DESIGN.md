@@ -300,3 +300,54 @@ Apple Account 登録時のローマ字本名で表示される（複数の実例
 5. Apple Developer Program 登録（Individual）
 6. Codemagic でビルド設定・TestFlight 配布・動作検証
 7. App Store 審査提出
+
+---
+
+## Phase 3: ネイティブ録画化の現在地（2026-07-18 時点）
+
+Phase 2 の 1〜6 は完了済み（Apple Developer 登録・App Store Connect・Codemagic・TestFlight まで全部開通）。
+その後「動画に音声が入らない」問題（WKWebView の MediaRecorder 制約）を解決するため、
+`@capgo/camera-preview` によるネイティブカメラ化を進行中。
+
+- **ブランチ構成**:
+  - `master`（タグ `stable-silent-video`）= Web カメラ版の安定版。全機能実機動作済み（動画音声なし）。いつでも復帰可能。
+  - `native-video-recording`（最新 eb34846 = ビルド19）= ネイティブ化作業ブランチ。動画+音声の録画・保存は実機実績あり。
+- **未解決問題**: ①ビルド16以降プレビューが常時黒 ②OS強制シャッター音が鳴る ③自作シャッター音が聞こえない
+- **詳細**: ビルド13〜19の症状生データ・否定済み仮説・切り分け実験の手順はすべて
+  **`HANDOFF_native_camera.md`**（本フォルダ直下）にまとめてある。作業再開時・他のAIへの引き継ぎ時はまずそれを読むこと。
+- **その後**: Phase 3 の3問題はすべて解決済み（2026-07-18、`d47b8af` で master 統合）。
+
+---
+
+## Phase 4: ガイドライン2.5.14 リジェクト対応（2026-07-26）
+
+v1.0ビルド30が2.5.14で**2回目のリジェクト**（レビュー日 2026-07-25、審査機 iPad Air 第5世代）。
+指摘は「写真撮影時にシャッター音を自動的に無効にしている」。
+
+### 根本原因の仮説（なぜなぜ分析の結論）
+
+審査機の iPad にはサイレントスイッチがなく、`.ambient` 再生の自作シャッター音は
+消音設定・メディア音量次第で完全無音になるため、審査員には「常に無音」に見えた可能性が高い（推測）。
+Apple は iPhone 専用アプリも iPad 互換モードで審査する慣行がある。
+
+### 対応内容（このコミット群）
+
+1. **iPad では `.playback` カテゴリでシャッター音を常時再生**（`ShutterSoundPlugin.swift`）。
+   iPhone は従来通り `.ambient`＝マナーモード連動で、無音機能は不変。
+2. **初回起動時の説明・同意画面**（`#first-launch-notice`、localStorage キー `zerocam-usage-notice-v1`）。
+   2.5.14 の "explicit user consent" に対応。同意後にカメラ起動（権限ダイアログも同意後）。
+3. **ストア文言改訂**（`app-store-assets/APP_STORE_METADATA.md`）：
+   通過組の定型「マナー撮影はiPhoneをマナーモードに！」・用途正当化・ご注意文を追加。
+   キーワードから「静音」を除去。
+4. **Review Notes 全面改訂＋Resolution Center 返信文 v2**（誤認反証型、デモ動画URL添付）。
+   返信文: `app-store-assets/REVIEW_RESPONSE_2.5.14.md`
+
+### 審査戦略の確定知見（調査に基づく）
+
+- 「他のアプリもやっている」比較論は**使用禁止**（Apple公式は違反アプリを通報対象と位置づけ。逆効果）
+- 「iOS 18.2で日本のシャッター音がオフ可能になった」は**事実確認できず使用禁止**
+- 使える他者比較は Apple 純正 API の挙動のみ（Developer Forums thread 28451 の appeal 勝訴例）
+- 現役通過組（StageCameraHD2・OneCam 2・Capera）の共通項＝「通常時は鳴る＋消音はOSスイッチ委譲」。
+  ZERO Camera は iPhone 上では既に同構成
+- 再リジェクト時は App Review Board へ appeal（1審査につき1回）
+- 調査資料: `app-store-assets/COMPETITOR_OBSERVATION_CHECKLIST.md` / `DEMO_VIDEO_GUIDE.md`
