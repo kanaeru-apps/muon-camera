@@ -179,6 +179,16 @@ body.native-cam #bottom-bar {
   transition: opacity 180ms ease;
 }
 
+#shutter-flash {
+  position: fixed;
+  inset: 0;
+  background: #fff;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 80ms ease;
+  z-index: 999;
+}
+
 #photo-capture-indicator.hidden {
   display: none;
 }

@@ -73,10 +73,6 @@
           <span>録画中</span>
           <span id="recording-time">00:00</span>
         </div>
-        <div id="shutter-flash" style="
-          position:absolute;inset:0;background:#fff;opacity:0;
-          pointer-events:none;transition:opacity 0.08s;z-index:4;
-        "></div>
       </div>
 
       <!-- Sliders (right side, fixed to viewfinder) -->
@@ -128,6 +124,9 @@
     </div>
 
   </div><!-- /camera-screen -->
+
+  <!-- Global so the flash remains visible while switching to the photo preview. -->
+  <div id="shutter-flash" aria-hidden="true"></div>
 
   <!-- Global so it remains visible while the captured-photo preview opens. -->
   <div id="photo-capture-indicator" class="hidden" role="status" aria-live="assertive">
