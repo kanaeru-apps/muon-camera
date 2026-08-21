@@ -239,6 +239,11 @@ body.native-cam #bottom-bar {
   z-index: 999;
 }
 
+#shutter-flash.screen-flash-active {
+  opacity: 1 !important;
+  transition: none;
+}
+
 #photo-capture-indicator.hidden {
   display: none;
 }

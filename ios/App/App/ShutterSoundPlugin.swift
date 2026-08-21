@@ -24,10 +24,13 @@ public class ShutterSoundPlugin: CAPPlugin, CAPBridgedPlugin {
     public let jsName = "ShutterSound"
     public let pluginMethods: [CAPPluginMethod] = [
         CAPPluginMethod(name: "play", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "beginScreenFlash", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "endScreenFlash", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setRecordingActive", returnType: CAPPluginReturnPromise)
     ]
 
     private var player: AVAudioPlayer?
+    private var brightnessBeforeScreenFlash: CGFloat?
 
     @objc func play(_ call: CAPPluginCall) {
         guard let url = Bundle.main.url(forResource: "shutter", withExtension: "wav") else {
@@ -63,6 +66,26 @@ public class ShutterSoundPlugin: CAPPlugin, CAPBridgedPlugin {
             // after recording ends or fails.
             UIApplication.shared.isIdleTimerDisabled = active
             call.resolve(["active": active])
+        }
+    }
+
+    @objc func beginScreenFlash(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            if self.brightnessBeforeScreenFlash == nil {
+                self.brightnessBeforeScreenFlash = UIScreen.main.brightness
+            }
+            UIScreen.main.brightness = 1.0
+            call.resolve()
+        }
+    }
+
+    @objc func endScreenFlash(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            if let previousBrightness = self.brightnessBeforeScreenFlash {
+                UIScreen.main.brightness = previousBrightness
+                self.brightnessBeforeScreenFlash = nil
+            }
+            call.resolve()
         }
     }
 }

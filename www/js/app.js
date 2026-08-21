@@ -35,11 +35,13 @@ const captureCanvas  = document.getElementById('capture-canvas');
 const gridCanvas     = document.getElementById('grid-canvas');
 const countdownEl    = document.getElementById('countdown-display');
 const toast          = document.getElementById('toast');
+const shutterFlash   = document.getElementById('shutter-flash');
 
 const ratioBtn       = document.getElementById('ratio-btn');
 const ratioBox       = document.getElementById('ratio-box');
 const viewfinder     = document.getElementById('viewfinder');
 const flashBtn       = document.getElementById('flash-btn');
+const flashLabel     = flashBtn.querySelector('.label');
 const timerBtn       = document.getElementById('timer-btn');
 const gridBtn        = document.getElementById('grid-btn');
 const brightnessSlider = document.getElementById('brightness-slider');
@@ -81,6 +83,37 @@ async function playShutterSound() {
     showToast('撮影音の再生に失敗しました', 5000);
     return false;
   }
+}
+
+function wait(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function beginFrontScreenFlash() {
+  if (!flashOn || currentFacing !== 'user') return false;
+
+  shutterFlash.classList.add('screen-flash-active');
+  if (ShutterSound) {
+    try { await ShutterSound.beginScreenFlash(); } catch (_) {}
+  }
+  // Give the display light and the front camera's auto exposure time to settle.
+  await wait(250);
+  return true;
+}
+
+async function endFrontScreenFlash(active) {
+  if (!active) return;
+  shutterFlash.classList.remove('screen-flash-active');
+  shutterFlash.style.opacity = '0';
+  if (ShutterSound) {
+    try { await ShutterSound.endScreenFlash(); } catch (_) {}
+  }
+}
+
+function updateFlashUIForCamera() {
+  const isFront = currentFacing === 'user';
+  flashLabel.textContent = isFront ? '画面フラッシュ' : 'フラッシュ';
+  flashBtn.setAttribute('aria-label', isFront ? '画面フラッシュ' : 'フラッシュ');
 }
 
 // ネイティブプレビューを撮影画面全体に敷く（UIは透過したWebViewが上に重なる）。
@@ -147,8 +180,9 @@ async function initCamera() {
     const caps = track.getCapabilities ? track.getCapabilities() : {};
 
     // Flash
-    flashSupported = !!caps.torch;
+    flashSupported = currentFacing === 'user' || !!caps.torch;
     flashBtn.classList.toggle('disabled', !flashSupported);
+    updateFlashUIForCamera();
     if (!flashSupported && flashOn) {
       flashOn = false;
       flashBtn.classList.remove('active');
@@ -211,6 +245,7 @@ async function initNativeCamera() {
     // フラッシュはネイティブで制御。既定OFF。
     flashSupported = true;
     flashBtn.classList.remove('disabled');
+    updateFlashUIForCamera();
     // ズームは setZoom で制御。スライダー範囲を設定。
     hwZoomSupported = true;
     try {
@@ -304,7 +339,9 @@ function capturePhoto() {
 // - 非対応時はAVCaptureVideoDataOutputの現在フレームを保存し、内蔵音を発生させない。
 // どちらもアプリ側の撮影音だけを使うため、通常時は鳴り、消音時は端末設定に従う。
 async function captureNativePhoto() {
+  let frontScreenFlashActive = false;
   try {
+    frontScreenFlashActive = await beginFrontScreenFlash();
     await playShutterSound();
     const captureResult = nativeShutterSuppressionSupported
       ? await CameraPreview.capture({
@@ -318,6 +355,8 @@ async function captureNativePhoto() {
           mirrorFrontCamera: currentFacing === 'user'
         });
     const { value, shutterSoundSuppressed } = captureResult;
+    await endFrontScreenFlash(frontScreenFlashActive);
+    frontScreenFlashActive = false;
     if (nativeShutterSuppressionSupported && shutterSoundSuppressed !== true) {
       nativeShutterSuppressionSupported = false;
       captureSoundStatus.textContent = 'マナーモード連動（静音撮影）';
@@ -348,6 +387,7 @@ async function captureNativePhoto() {
     img.onerror = () => showToast('撮影画像の読み込みに失敗しました');
     img.src = 'data:image/jpeg;base64,' + value;
   } catch (e) {
+    await endFrontScreenFlash(frontScreenFlashActive);
     showToast('撮影に失敗: ' + (e?.message || e), 6000);
   }
 }
@@ -355,10 +395,9 @@ async function captureNativePhoto() {
 function flashShutter() {
   // ガイドライン2.5.14対応: 撮影(=記録)したことを視覚的に明示する。
   // マナーモード中も、白フラッシュと明示メッセージで撮影を通知する。
-  const flash = document.getElementById('shutter-flash');
   const captureIndicator = document.getElementById('photo-capture-indicator');
-  flash.style.opacity = '0.7';
-  setTimeout(() => { flash.style.opacity = '0'; }, 150);
+  shutterFlash.style.opacity = '0.7';
+  setTimeout(() => { shutterFlash.style.opacity = '0'; }, 150);
   cameraScreen.classList.add('photo-captured');
   clearTimeout(flashShutter.frameTimer);
   flashShutter.frameTimer = setTimeout(() => {
@@ -379,6 +418,10 @@ async function toggleFlash() {
   if (useNativeCam) {
     flashOn = !flashOn;
     flashBtn.classList.toggle('active', flashOn);
+    if (currentFacing === 'user') {
+      showToast(`画面フラッシュ ${flashOn ? 'ON' : 'OFF'}`);
+      return;
+    }
     try {
       // 写真は撮影時にフラッシュ発光、動画はtorch(常時点灯)が近い。
       // ここでは torch(点灯) / off をトグルする。
@@ -388,6 +431,12 @@ async function toggleFlash() {
       flashOn = !flashOn;
       flashBtn.classList.toggle('active', flashOn);
     }
+    return;
+  }
+  if (currentFacing === 'user') {
+    flashOn = !flashOn;
+    flashBtn.classList.toggle('active', flashOn);
+    showToast(`画面フラッシュ ${flashOn ? 'ON' : 'OFF'}`);
     return;
   }
   if (!flashSupported) {
@@ -409,18 +458,19 @@ async function toggleFlash() {
 // ── Camera flip ────────────────────────────────────────
 
 async function flipCamera() {
-  // Turn off flash before switching
-  if (flashOn) {
-    flashOn = false;
-    flashBtn.classList.remove('active');
-    if (!useNativeCam) {
-      try {
+  // Turn off the rear torch before switching, while preserving the user's
+  // ON/OFF selection for the destination camera.
+  if (flashOn && currentFacing === 'environment') {
+    try {
+      if (useNativeCam) await CameraPreview.setFlashMode({ flashMode: 'off' });
+      else {
         const track = stream?.getVideoTracks()[0];
         if (track) await track.applyConstraints({ advanced: [{ torch: false }] });
-      } catch (_) {}
-    }
+      }
+    } catch (_) {}
   }
   currentFacing = currentFacing === 'environment' ? 'user' : 'environment';
+  updateFlashUIForCamera();
 
   if (useNativeCam) {
     try {
@@ -430,9 +480,28 @@ async function flipCamera() {
       // flipが使えない場合はプレビューを再起動して切替
       await initNativeCamera();
     }
+    if (flashOn && currentFacing === 'environment') {
+      try {
+        await CameraPreview.setFlashMode({ flashMode: 'torch' });
+      } catch (_) {
+        flashOn = false;
+        flashBtn.classList.remove('active');
+        showToast('フラッシュの切り替えに失敗しました');
+      }
+    }
     return;
   }
   await initCamera();
+  if (flashOn && currentFacing === 'environment') {
+    try {
+      const track = stream?.getVideoTracks()[0];
+      if (track) await track.applyConstraints({ advanced: [{ torch: true }] });
+    } catch (_) {
+      flashOn = false;
+      flashBtn.classList.remove('active');
+      showToast('フラッシュの切り替えに失敗しました');
+    }
+  }
 }
 
 // ── Timer ──────────────────────────────────────────────

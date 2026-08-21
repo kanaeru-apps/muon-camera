@@ -31,6 +31,7 @@ ZERO Cameraは、端末のマナーモードに合わせて静かに撮影でき
 ・撮影タイマー
 ・グリッド表示
 ・フラッシュ切り替え
+・前面カメラの画面フラッシュ（オン／オフ切り替え）
 ・写真ライブラリへの保存
 ・iOS標準の共有機能
 
@@ -65,6 +66,10 @@ Recording indicators (cannot be disabled by the user):
 - Video recording shows a red "Recording" label with elapsed time for the entire recording. The camera preview remains visible throughout and never goes blank.
 - On first launch, the app shows a notice screen describing these indicators and Silent Mode behavior, which the user must acknowledge before the camera starts.
 - The app has no feature to darken or blank the screen while capturing.
+
+Front-camera flash:
+- The front camera has no LED flash, so the app provides an optional screen flash controlled by the same Flash button.
+- When enabled for a front-camera photo, the app briefly displays a white screen at maximum display brightness before capture, then restores the user's previous brightness.
 
 To test:
 1. Launch the app, acknowledge the first-launch notice, and allow Camera / Microphone / Add Photos permissions.
