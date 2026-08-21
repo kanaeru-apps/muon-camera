@@ -12,6 +12,7 @@ workflows:
         distribution_type: app_store
         bundle_identifier: com.kanaeru.zerocam
       vars:
+        APP_STORE_APPLE_ID: "6791006192"
         XCODE_PROJECT: "ios/App/App.xcodeproj"
         XCODE_SCHEME: "App"
       node: latest
@@ -23,10 +24,14 @@ workflows:
         script: npx cap sync ios
       - name: Set up code signing
         script: xcode-project use-profiles
-      - name: Increment build number
+      - name: Set next TestFlight build number
         script: |
+          LATEST_BUILD_NUMBER=$(app-store-connect get-latest-testflight-build-number "$APP_STORE_APPLE_ID")
+          NEXT_BUILD_NUMBER=$((LATEST_BUILD_NUMBER + 1))
+          echo "Latest TestFlight build: $LATEST_BUILD_NUMBER"
+          echo "Building as: $NEXT_BUILD_NUMBER"
           cd "$CM_BUILD_DIR/ios/App"
-          agvtool new-version -all "$BUILD_NUMBER"
+          agvtool new-version -all "$NEXT_BUILD_NUMBER"
       - name: Build ipa for distribution
         script: |
           xcode-project build-ipa \
