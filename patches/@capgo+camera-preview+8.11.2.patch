@@ -35,46 +35,65 @@ index 3cac034..c6da63f 100644
      /**
       * Captures a single frame from the camera preview stream.
 diff --git a/node_modules/@capgo/camera-preview/ios/Sources/CapgoCameraPreviewPlugin/CameraController.swift b/node_modules/@capgo/camera-preview/ios/Sources/CapgoCameraPreviewPlugin/CameraController.swift
-index 26e1b3e..32b98e2 100644
+index 26e1b3e..c4a8d61 100644
 --- a/node_modules/@capgo/camera-preview/ios/Sources/CapgoCameraPreviewPlugin/CameraController.swift
 +++ b/node_modules/@capgo/camera-preview/ios/Sources/CapgoCameraPreviewPlugin/CameraController.swift
-@@ -1332,7 +1332,24 @@ extension CameraController {
+@@ -1332,7 +1332,21 @@ extension CameraController {
          self.updateVideoOrientation()
      }
  
 -    func captureImage(width: Int?, height: Int?, quality: Float, gpsLocation: CLLocation?, embedTimestamp: Bool, embedLocation: Bool, photoQualityPrioritization: String, completion: @escaping (UIImage?, Data?, [AnyHashable: Any]?, Error?) -> Void) {
-+    /// Uses Apple's documented shutter-sound-suppression properties when the
-+    /// running OS and jurisdiction expose them. Dynamic lookup keeps the
-+    /// plugin compatible with the app's iOS 15 deployment target while still
-+    /// using the public AVFoundation API on newer systems.
++    /// Uses Apple's documented shutter-sound-suppression properties only when
++    /// the running OS and current device or jurisdiction expose them.
 +    func shutterSoundSuppressionIsSupported() -> Bool {
 +        guard let photoOutput = self.photoOutput else { return false }
-+        let selector = NSSelectorFromString("isShutterSoundSuppressionSupported")
-+        guard photoOutput.responds(to: selector) else { return false }
-+        return (photoOutput.value(forKey: "shutterSoundSuppressionSupported") as? NSNumber)?.boolValue ?? false
++        if #available(iOS 26.0, *) {
++            return photoOutput.isShutterSoundSuppressionSupported
++        }
++        return false
 +    }
 +
 +    func shutterSoundSuppressionCanBeEnabled() -> Bool {
-+        guard self.shutterSoundSuppressionIsSupported() else { return false }
-+        let settings = AVCapturePhotoSettings()
-+        return settings.responds(to: NSSelectorFromString("setShutterSoundSuppressionEnabled:"))
++        return self.shutterSoundSuppressionIsSupported()
 +    }
 +
 +    func captureImage(width: Int?, height: Int?, quality: Float, gpsLocation: CLLocation?, embedTimestamp: Bool, embedLocation: Bool, photoQualityPrioritization: String, suppressShutterSound: Bool, completion: @escaping (UIImage?, Data?, [AnyHashable: Any]?, Error?) -> Void) {
          guard let photoOutput = self.photoOutput else {
              completion(nil, nil, nil, NSError(domain: "Camera", code: 0, userInfo: [NSLocalizedDescriptionKey: "Photo output is not available"]))
              return
-@@ -1345,6 +1362,10 @@ extension CameraController {
+@@ -1345,19 +1359,28 @@ extension CameraController {
              self.setVideoOrientation(captureOrientation, on: connection)
          }
          let settings = AVCapturePhotoSettings()
-+        let suppressionSetter = NSSelectorFromString("setShutterSoundSuppressionEnabled:")
-+        if suppressShutterSound && self.shutterSoundSuppressionIsSupported() && settings.responds(to: suppressionSetter) {
-+            settings.setValue(true, forKey: "shutterSoundSuppressionEnabled")
++        if #available(iOS 26.0, *), suppressShutterSound, photoOutput.isShutterSoundSuppressionSupported {
++            settings.isShutterSoundSuppressionEnabled = true
 +        }
          // Configure photo capture settings optimized for speed
          // Only use high res if explicitly requesting large dimensions
          let shouldUseHighRes = width.map { $0 > 1920 } ?? false || height.map { $0 > 1920 } ?? false
+         settings.isHighResolutionPhotoEnabled = shouldUseHighRes
+         if #available(iOS 15.0, *) {
++            let requestedPriority: AVCapturePhotoOutput.QualityPrioritization
+             if photoQualityPrioritization == "quality" {
+-                settings.photoQualityPrioritization = .quality
++                requestedPriority = .quality
+             } else if photoQualityPrioritization == "balanced" {
+-                settings.photoQualityPrioritization = .balanced
++                requestedPriority = .balanced
+             } else {
+-                // Default Prioritize speed over quality
+-                settings.photoQualityPrioritization = .speed
++                requestedPriority = .speed
+             }
++
++            // AVCapturePhotoOutput raises an Objective-C exception if a
++            // per-capture request exceeds the output's configured maximum.
++            settings.photoQualityPrioritization = requestedPriority.rawValue <= photoOutput.maxPhotoQualityPrioritization.rawValue
++                ? requestedPriority
++                : photoOutput.maxPhotoQualityPrioritization
+         }
+ 
+         // Apply the current flash mode to the photo settings
 diff --git a/node_modules/@capgo/camera-preview/ios/Sources/CapgoCameraPreviewPlugin/Plugin.swift b/node_modules/@capgo/camera-preview/ios/Sources/CapgoCameraPreviewPlugin/Plugin.swift
 index e01ebf7..25a5ba7 100644
 --- a/node_modules/@capgo/camera-preview/ios/Sources/CapgoCameraPreviewPlugin/Plugin.swift

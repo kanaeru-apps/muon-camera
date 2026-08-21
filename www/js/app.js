@@ -312,7 +312,7 @@ async function captureNativePhoto() {
     if (nativeShutterSuppressionSupported) await playShutterSound();
     const { value, shutterSoundSuppressed } = await CameraPreview.capture({
       quality: 100,
-      photoQualityPrioritization: 'quality',
+      photoQualityPrioritization: 'balanced',
       mirrorFrontCamera: currentFacing === 'user',
       suppressShutterSound: nativeShutterSuppressionSupported
     });
