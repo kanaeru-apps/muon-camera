@@ -27,6 +27,8 @@ let isBurst = false;
 let countdownTimer = null;
 let recordingTimer = null;
 let recordingSeconds = 0;
+let nativeShutterSuppressionSupported = false;
+let nativeAlwaysAudibleShutter = false;
 
 // ── DOM ────────────────────────────────────────────────
 const video          = document.getElementById('video');
@@ -48,6 +50,7 @@ const shutterIcon    = document.getElementById('shutter-icon');
 const flipBtn        = document.getElementById('flip-btn');
 const thumbnailBtn   = document.getElementById('thumbnail-btn');
 const thumbnailImg   = document.getElementById('thumbnail-img');
+const captureSoundStatus = document.getElementById('capture-sound-status');
 
 // ── Native plugins (iOS only) ───────────────────────────
 // ネイティブアプリ実行時のみ有効。Web版では何もしない（従来通りの挙動にフォールバック）。
@@ -69,8 +72,16 @@ let nativeExposureBias = 0;   // ネイティブカメラの露出補正(EV)
 let recState = 'idle';
 let recFinalizedForCurrent = false;
 
-function playShutterSound() {
-  if (ShutterSound) ShutterSound.play().catch(() => {});
+async function playShutterSound() {
+  if (!ShutterSound) return true;
+  try {
+    await ShutterSound.play();
+    return true;
+  } catch (e) {
+    console.error('Failed to play the app shutter sound', e);
+    showToast('撮影音の再生に失敗しました', 5000);
+    return false;
+  }
 }
 
 // ネイティブプレビューを撮影画面全体に敷く（UIは透過したWebViewが上に重なる）。
@@ -165,6 +176,7 @@ async function initCamera() {
 
     // Mirror front camera
     video.style.transform = currentFacing === 'user' ? 'scaleX(-1)' : '';
+    captureSoundStatus.textContent = 'ブラウザ撮影';
 
     // Apply ratio box after stream layout settles
     requestAnimationFrame(applyRatioBox);
@@ -187,6 +199,20 @@ async function initNativeCamera() {
   try {
     await CameraPreview.start(nativeStartOptions());
     nativeCamStarted = true;
+    try {
+      const support = await CameraPreview.getShutterSoundSuppressionSupport();
+      nativeShutterSuppressionSupported = support?.supported === true;
+      nativeAlwaysAudibleShutter = support?.usesAlwaysAudibleAppSound === true;
+    } catch (e) {
+      nativeShutterSuppressionSupported = false;
+      nativeAlwaysAudibleShutter = false;
+      console.warn('Unable to read shutter-sound suppression support', e);
+    }
+    captureSoundStatus.textContent = nativeAlwaysAudibleShutter
+      ? 'iPadでは撮影音あり'
+      : nativeShutterSuppressionSupported
+        ? 'マナーモード連動'
+        : 'この端末では撮影音あり';
     // フラッシュはネイティブで制御。既定OFF。
     flashSupported = true;
     flashBtn.classList.remove('disabled');
@@ -278,16 +304,22 @@ function capturePhoto() {
   }, 'image/jpeg', 0.95);
 }
 
-// ネイティブ無音撮影: Previewの1フレームを取得して選択画角にトリミングする。
-// AVCapturePhotoOutputを使うcapture()は、日本向けiPhoneではマナーモードでも
-// OS標準シャッター音が鳴るため使用しない。captureSample()は動画フレーム取得なので
-// OSの写真撮影音を発生させず、通常モード用の音はplayShutterSound()だけで制御する。
+// ネイティブ写真撮影: AVCapturePhotoOutputの公式シャッター音抑制APIを利用する。
+// OSが対応している場合だけ抑制を要求し、非対応の地域・端末ではシステム撮影音を残す。
+// 対応端末ではアプリ側の撮影音を先に再生し、通常時は鳴る／消音時は端末設定に従う。
 async function captureNativePhoto() {
   try {
-    const { value } = await CameraPreview.captureSample({
+    if (nativeShutterSuppressionSupported) await playShutterSound();
+    const { value, shutterSoundSuppressed } = await CameraPreview.capture({
       quality: 100,
-      mirrorFrontCamera: currentFacing === 'user'
+      photoQualityPrioritization: 'quality',
+      mirrorFrontCamera: currentFacing === 'user',
+      suppressShutterSound: nativeShutterSuppressionSupported
     });
+    if (nativeShutterSuppressionSupported && shutterSoundSuppressed !== true) {
+      nativeShutterSuppressionSupported = false;
+      captureSoundStatus.textContent = 'この端末では撮影音あり';
+    }
     const img = new Image();
     img.onload = () => {
       const iw = img.naturalWidth, ih = img.naturalHeight;
@@ -308,7 +340,6 @@ async function captureNativePhoto() {
       captureCanvas.toBlob(blob => {
         setCapture('photo', blob, 'image/jpeg');
         flashShutter();
-        playShutterSound();
         if (!isBurst) showPreview();
       }, 'image/jpeg', 0.95);
     };
@@ -326,13 +357,18 @@ function flashShutter() {
   const captureIndicator = document.getElementById('photo-capture-indicator');
   flash.style.opacity = '0.7';
   setTimeout(() => { flash.style.opacity = '0'; }, 150);
+  cameraScreen.classList.add('photo-captured');
+  clearTimeout(flashShutter.frameTimer);
+  flashShutter.frameTimer = setTimeout(() => {
+    cameraScreen.classList.remove('photo-captured');
+  }, 1500);
   // Keep an explicit, non-configurable in-app indication visible long enough
   // to be perceived even when the photo preview opens immediately.
   captureIndicator.classList.remove('hidden');
   clearTimeout(flashShutter.indicatorTimer);
   flashShutter.indicatorTimer = setTimeout(() => {
     captureIndicator.classList.add('hidden');
-  }, 1200);
+  }, 1500);
 }
 
 // ── Flash ──────────────────────────────────────────────
@@ -644,6 +680,7 @@ async function startRecording() {
       startRecordingIndicator();
     } catch (e) {
       recState = 'idle';
+      stopRecordingIndicator();
       showToast('録画開始に失敗: ' + (e?.message || e), 6000);
     }
     return;
@@ -724,6 +761,13 @@ function startRecordingIndicator() {
   recordingSeconds = 0;
   recordingTimeEl.textContent = '00:00';
   recordingIndicator.classList.remove('hidden');
+  cameraScreen.classList.add('recording-active');
+  if (ShutterSound) {
+    ShutterSound.setRecordingActive({ active: true }).catch(e => {
+      console.error('Failed to disable the idle timer while recording', e);
+      showToast('録画中の画面維持を有効にできませんでした', 5000);
+    });
+  }
   recordingTimer = setInterval(() => {
     recordingSeconds++;
     const m = String(Math.floor(recordingSeconds / 60)).padStart(2, '0');
@@ -735,6 +779,12 @@ function startRecordingIndicator() {
 function stopRecordingIndicator() {
   clearInterval(recordingTimer);
   recordingIndicator.classList.add('hidden');
+  cameraScreen.classList.remove('recording-active');
+  if (ShutterSound) {
+    ShutterSound.setRecordingActive({ active: false }).catch(e => {
+      console.error('Failed to restore the idle timer after recording', e);
+    });
+  }
 }
 
 // ── Capture management ─────────────────────────────────
@@ -1069,10 +1119,15 @@ if (useNativeCam && CameraPreview.addListener) {
   });
 }
 
+// 画面が非表示になると、ユーザーが録画状態を視認できなくなるため録画を終了する。
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden && isRecording) stopRecording();
+});
+
 // ガイドライン2.5.14対応: 初回起動時に「撮影表示は無効化できない・通常時は
-// シャッター音が鳴る・マナーモード時は端末設定に従う」ことを明示し同意を得る。
+// シャッター音が鳴る・消音撮影はシステムが許可する端末だけ」と明示し同意を得る。
 // 同意後にカメラを起動する(=カメラ権限ダイアログも同意後に出る)。
-const USAGE_NOTICE_KEY = 'zerocam-usage-notice-v1';
+const USAGE_NOTICE_KEY = 'zerocam-usage-notice-v2';
 
 function startCamera() {
   initCamera();

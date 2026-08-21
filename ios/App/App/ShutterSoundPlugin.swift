@@ -24,7 +24,8 @@ public class ShutterSoundPlugin: CAPPlugin, CAPBridgedPlugin {
     public let identifier = "ShutterSoundPlugin"
     public let jsName = "ShutterSound"
     public let pluginMethods: [CAPPluginMethod] = [
-        CAPPluginMethod(name: "play", returnType: CAPPluginReturnPromise)
+        CAPPluginMethod(name: "play", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "setRecordingActive", returnType: CAPPluginReturnPromise)
     ]
 
     private var player: AVAudioPlayer?
@@ -55,6 +56,17 @@ public class ShutterSoundPlugin: CAPPlugin, CAPBridgedPlugin {
             call.resolve()
         } catch {
             call.reject("Failed to play shutter sound: \(error.localizedDescription)")
+        }
+    }
+
+    @objc func setRecordingActive(_ call: CAPPluginCall) {
+        let active = call.getBool("active", false) ?? false
+        DispatchQueue.main.async {
+            // Guideline 2.5.14: the display must not go blank while video is
+            // recording. Restore the normal idle-timer behavior immediately
+            // after recording ends or fails.
+            UIApplication.shared.isIdleTimerDisabled = active
+            call.resolve(["active": active])
         }
     }
 }
