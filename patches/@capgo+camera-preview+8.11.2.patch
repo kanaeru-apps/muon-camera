@@ -137,7 +137,7 @@ index e01ebf7..25a5ba7 100644
 +    @objc func getShutterSoundSuppressionSupport(_ call: CAPPluginCall) {
 +        call.resolve([
 +            "supported": self.cameraController.shutterSoundSuppressionCanBeEnabled(),
-+            "usesAlwaysAudibleAppSound": UIDevice.current.userInterfaceIdiom == .pad
++            "usesAlwaysAudibleAppSound": false
 +        ])
 +    }
 +

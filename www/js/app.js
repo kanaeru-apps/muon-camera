@@ -28,7 +28,6 @@ let countdownTimer = null;
 let recordingTimer = null;
 let recordingSeconds = 0;
 let nativeShutterSuppressionSupported = false;
-let nativeAlwaysAudibleShutter = false;
 
 // ── DOM ────────────────────────────────────────────────
 const video          = document.getElementById('video');
@@ -202,17 +201,13 @@ async function initNativeCamera() {
     try {
       const support = await CameraPreview.getShutterSoundSuppressionSupport();
       nativeShutterSuppressionSupported = support?.supported === true;
-      nativeAlwaysAudibleShutter = support?.usesAlwaysAudibleAppSound === true;
     } catch (e) {
       nativeShutterSuppressionSupported = false;
-      nativeAlwaysAudibleShutter = false;
       console.warn('Unable to read shutter-sound suppression support', e);
     }
-    captureSoundStatus.textContent = nativeAlwaysAudibleShutter
-      ? 'iPadでは撮影音あり'
-      : nativeShutterSuppressionSupported
-        ? 'マナーモード連動'
-        : 'この端末では撮影音あり';
+    captureSoundStatus.textContent = nativeShutterSuppressionSupported
+      ? 'マナーモード連動'
+      : 'マナーモード連動（静音撮影）';
     // フラッシュはネイティブで制御。既定OFF。
     flashSupported = true;
     flashBtn.classList.remove('disabled');
@@ -304,21 +299,28 @@ function capturePhoto() {
   }, 'image/jpeg', 0.95);
 }
 
-// ネイティブ写真撮影: AVCapturePhotoOutputの公式シャッター音抑制APIを利用する。
-// OSが対応している場合だけ抑制を要求し、非対応の地域・端末ではシステム撮影音を残す。
-// 対応端末ではアプリ側の撮影音を先に再生し、通常時は鳴る／消音時は端末設定に従う。
+// ネイティブ写真撮影:
+// - 抑制API対応時はAVCapturePhotoOutputを使い、内蔵音を抑制する。
+// - 非対応時はAVCaptureVideoDataOutputの現在フレームを保存し、内蔵音を発生させない。
+// どちらもアプリ側の撮影音だけを使うため、通常時は鳴り、消音時は端末設定に従う。
 async function captureNativePhoto() {
   try {
-    if (nativeShutterSuppressionSupported) await playShutterSound();
-    const { value, shutterSoundSuppressed } = await CameraPreview.capture({
-      quality: 100,
-      photoQualityPrioritization: 'balanced',
-      mirrorFrontCamera: currentFacing === 'user',
-      suppressShutterSound: nativeShutterSuppressionSupported
-    });
+    await playShutterSound();
+    const captureResult = nativeShutterSuppressionSupported
+      ? await CameraPreview.capture({
+          quality: 100,
+          photoQualityPrioritization: 'balanced',
+          mirrorFrontCamera: currentFacing === 'user',
+          suppressShutterSound: true
+        })
+      : await CameraPreview.captureSample({
+          quality: 100,
+          mirrorFrontCamera: currentFacing === 'user'
+        });
+    const { value, shutterSoundSuppressed } = captureResult;
     if (nativeShutterSuppressionSupported && shutterSoundSuppressed !== true) {
       nativeShutterSuppressionSupported = false;
-      captureSoundStatus.textContent = 'この端末では撮影音あり';
+      captureSoundStatus.textContent = 'マナーモード連動（静音撮影）';
     }
     const img = new Image();
     img.onload = () => {

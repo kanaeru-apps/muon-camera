@@ -9,25 +9,26 @@
 
 Hello App Review Team,
 
-Thank you for your continued review. We would like to respectfully clarify a point about the shutter sound, and describe the changes made in this new build.
+Thank you for your continued review. We would like to transparently describe the shutter-sound and capture behavior in this new build.
 
-**The app does play an audible shutter sound by default, and it never disables the sound on its own.** The shutter sound simply follows the device's user-controlled system settings, in the same way other app sounds do:
+**The app plays its own audible shutter sound in normal sound mode.** The sound uses the ambient audio category and follows the user's system-controlled Silent Mode setting on both iPhone and iPad.
 
-- On iPhone, the shutter sound plays whenever the Ring/Silent switch is set to Ring. It is muted only when the user has physically set the hardware switch to Silent.
-- We noticed that the previous review was performed on an iPad Air (5th generation). iPads have no hardware Ring/Silent switch, and if silent mode was enabled in Control Center (or the media volume was down), the shutter sound would not have been audible during the review. We apologize that this behavior was not clearly explained in our previous notes.
+The photo implementation has two explicit paths:
+- If AVFoundation reports that system shutter-sound suppression is supported, the app uses AVCapturePhotoOutput with Apple's documented suppression setting and plays the app-managed shutter sound.
+- If suppression is unavailable for the current device or jurisdiction, the app saves the current AVCaptureVideoDataOutput frame instead of invoking AVCapturePhotoOutput. This path does not generate a built-in system shutter sound and uses the same app-managed sound.
 
 To remove any ambiguity, we made the following changes in this build:
 
-1. **On iPad, the shutter sound now always plays**, regardless of the silent setting, since iPads have no hardware Ring/Silent switch.
-2. **A first-launch notice screen** was added. Before the camera starts for the first time, the user must acknowledge that (a) capture and recording always produce on-screen indicators that cannot be disabled, (b) a shutter sound plays in normal mode, and (c) the sound follows the device's Silent Mode setting.
+1. **The sound behavior is consistent on iPhone and iPad:** audible in normal sound mode and muted only by the user's Silent Mode setting.
+2. **A first-launch notice screen** explains that (a) capture and recording always produce on-screen indicators that cannot be disabled, (b) a shutter sound plays in normal mode, and (c) the sound follows the device's Silent Mode setting.
 3. The existing indicators remain in place and cannot be disabled: a persistent "Camera Active" badge on the viewfinder, a white shutter flash plus a "Photo Captured" confirmation on every capture, and a red "Recording" label with elapsed time during video recording. The camera preview never goes blank while recording, and the app has no feature to darken or blank the screen while capturing.
 
 We recorded a demo video on a physical iPhone showing the shutter sound with the Ring/Silent switch in each position, together with all indicators:
 [DEMO VIDEO URL]
 
 To verify on the review device:
-- iPhone: set the Ring/Silent switch to Ring and raise the volume, then take a photo — the shutter sound plays along with the visual indicators.
-- iPad: raise the media volume and take a photo — the shutter sound always plays.
+- Disable Silent Mode, raise the media volume, and take a photo — the app-managed shutter sound plays along with the visual indicators.
+- Enable Silent Mode and take another photo — the sound follows that user setting, while the same visible indicators remain present.
 
 Thank you very much for reviewing the revised build.
 
@@ -35,16 +36,15 @@ Thank you very much for reviewing the revised build.
 
 App Reviewチームの皆様
 
-継続してご審査いただきありがとうございます。シャッター音について1点補足させていただくとともに、新ビルドでの変更点をご説明します。
+継続してご審査いただきありがとうございます。新ビルドの撮影音と撮影方式について、透明性をもってご説明します。
 
-**本アプリはデフォルトでシャッター音を再生しており、アプリ側から音を無効化することはありません。** シャッター音は、他のアプリの音と同様に、端末のユーザー設定に従うだけです。
+**本アプリは通常のサウンドモードでは独自のシャッター音を再生します。** この音はambientオーディオカテゴリを使用し、iPhone・iPadともユーザーが設定した消音モードに従います。
 
-- iPhoneでは、着信/サイレントスイッチが着信側であれば必ずシャッター音が鳴ります。消音されるのは、ユーザー自身がハードウェアスイッチをサイレントに切り替えた場合のみです。
-- 前回の審査はiPad Air（第5世代）で行われたと承知しています。iPadにはハードウェアの着信/サイレントスイッチがなく、コントロールセンターで消音が有効（またはメディア音量が下がった状態）だった場合、審査中にシャッター音が聞こえなかった可能性があります。前回のノートでこの挙動を明確にご説明できておらず申し訳ありません。
+写真撮影には2つの経路があります。AVFoundationがシステム撮影音の抑制に対応している場合は、Appleの公式設定を有効にしたAVCapturePhotoOutputを使用します。端末または地域の条件により非対応の場合は、AVCapturePhotoOutputを呼ばず、AVCaptureVideoDataOutputの現在フレームを保存します。どちらも同じ独自撮影音と視覚表示を使用します。
 
 曖昧さをなくすため、本ビルドでは以下を変更しました。
 
-1. **iPadではサイレント設定にかかわらずシャッター音が常に鳴る**ようにしました（iPadにはハードウェアスイッチがないため）。
+1. **iPhone・iPadで同じ挙動**とし、通常モードでは音が鳴り、ユーザーが消音モードにした場合だけ音が消えます。
 2. **初回起動時の通知画面**を追加しました。初めてカメラが起動する前に、(a)撮影・録画時は必ず画面表示が出て無効化できないこと、(b)通常モードではシャッター音が鳴ること、(c)音は端末の消音設定に従うこと、をユーザーが確認する必要があります。
 3. 既存のインジケーターは引き続き無効化できません：ビューファインダーの「カメラ使用中」常時バッジ、撮影ごとの白フラッシュ＋「写真を撮影しました」確認、録画中の赤い「録画中」表示＋経過時間。録画中にプレビューが暗転することはなく、撮影中に画面を暗くする機能はアプリに存在しません。
 
@@ -52,8 +52,8 @@ iPhone実機で、スイッチ両ポジションでのシャッター音と全�
 [DEMO VIDEO URL]
 
 審査デバイスでの確認方法：
-- iPhone：着信/サイレントスイッチを着信側にして音量を上げ、写真を撮影 → シャッター音と視覚表示を確認できます。
-- iPad：メディア音量を上げて写真を撮影 → シャッター音が常に鳴ります。
+- 消音モードを解除して音量を上げ、写真を撮影 → 独自撮影音と視覚表示を確認できます。
+- 消音モードを有効にして再度撮影 → 音は端末設定に従って消えますが、視覚表示は同じように必ず表示されます。
 
 修正版ビルドのご審査、何卒よろしくお願いいたします。
 
