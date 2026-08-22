@@ -28,6 +28,9 @@ let countdownTimer = null;
 let recordingTimer = null;
 let recordingSeconds = 0;
 let nativeShutterSuppressionSupported = false;
+let nativeFlashTarget = 'torch'; // 'screen' | 'torch' | 'on'
+let cameraFlipInProgress = false;
+let flashToggleInProgress = false;
 
 // ── DOM ────────────────────────────────────────────────
 const video          = document.getElementById('video');
@@ -90,7 +93,10 @@ function wait(ms) {
 }
 
 async function beginFrontScreenFlash() {
-  if (!flashOn || currentFacing !== 'user') return false;
+  const shouldUseScreenFlash = useNativeCam
+    ? nativeFlashTarget === 'screen'
+    : currentFacing === 'user';
+  if (!flashOn || !shouldUseScreenFlash) return false;
 
   shutterFlash.classList.add('screen-flash-active');
   if (ShutterSound) {
@@ -111,9 +117,53 @@ async function endFrontScreenFlash(active) {
 }
 
 function updateFlashUIForCamera() {
-  const isFront = currentFacing === 'user';
-  flashLabel.textContent = isFront ? '画面フラッシュ' : 'フラッシュ';
-  flashBtn.setAttribute('aria-label', isFront ? '画面フラッシュ' : 'フラッシュ');
+  const usesScreenFlash = useNativeCam
+    ? nativeFlashTarget === 'screen'
+    : currentFacing === 'user';
+  flashLabel.textContent = usesScreenFlash ? '画面フラッシュ' : 'フラッシュ';
+  flashBtn.setAttribute('aria-label', usesScreenFlash ? '画面フラッシュ' : 'フラッシュ');
+}
+
+async function syncNativeFacingFromDevice() {
+  if (!useNativeCam) return currentFacing;
+  try {
+    const [{ deviceId }, { devices }] = await Promise.all([
+      CameraPreview.getDeviceId(),
+      CameraPreview.getAvailableDevices()
+    ]);
+    const activeDevice = devices?.find(device => device.deviceId === deviceId);
+    if (activeDevice?.position === 'front') currentFacing = 'user';
+    if (activeDevice?.position === 'rear') currentFacing = 'environment';
+  } catch (e) {
+    // Keep the last known value on older plugin/device combinations.
+    console.warn('Unable to synchronize active camera position', e);
+  }
+  return currentFacing;
+}
+
+async function refreshNativeFlashTarget() {
+  if (!useNativeCam) return currentFacing === 'user' ? 'screen' : 'torch';
+
+  const facing = await syncNativeFacingFromDevice();
+  if (facing === 'user') {
+    nativeFlashTarget = 'screen';
+    updateFlashUIForCamera();
+    return nativeFlashTarget;
+  }
+
+  try {
+    const { result = [] } = await CameraPreview.getSupportedFlashModes();
+    if (result.includes('torch')) nativeFlashTarget = 'torch';
+    else if (result.includes('on')) nativeFlashTarget = 'on';
+    else nativeFlashTarget = 'screen';
+  } catch (e) {
+    // Rear iPhones normally support torch. Preserve the prior behavior if the
+    // capability query itself is unavailable.
+    nativeFlashTarget = 'torch';
+    console.warn('Unable to read supported flash modes', e);
+  }
+  updateFlashUIForCamera();
+  return nativeFlashTarget;
 }
 
 // ネイティブプレビューを撮影画面全体に敷く（UIは透過したWebViewが上に重なる）。
@@ -232,6 +282,7 @@ async function initNativeCamera() {
   try {
     await CameraPreview.start(nativeStartOptions());
     nativeCamStarted = true;
+    await refreshNativeFlashTarget();
     try {
       const support = await CameraPreview.getShutterSoundSuppressionSupport();
       nativeShutterSuppressionSupported = support?.supported === true;
@@ -341,6 +392,7 @@ function capturePhoto() {
 async function captureNativePhoto() {
   let frontScreenFlashActive = false;
   try {
+    await refreshNativeFlashTarget();
     frontScreenFlashActive = await beginFrontScreenFlash();
     await playShutterSound();
     const captureResult = nativeShutterSuppressionSupported
@@ -416,20 +468,28 @@ function flashShutter() {
 
 async function toggleFlash() {
   if (useNativeCam) {
-    flashOn = !flashOn;
-    flashBtn.classList.toggle('active', flashOn);
-    if (currentFacing === 'user') {
-      showToast(`画面フラッシュ ${flashOn ? 'ON' : 'OFF'}`);
+    if (cameraFlipInProgress) {
+      showToast('カメラの切り替え完了後に操作してください');
       return;
     }
+    if (flashToggleInProgress) return;
+    flashToggleInProgress = true;
+    const previousFlashOn = flashOn;
     try {
-      // 写真は撮影時にフラッシュ発光、動画はtorch(常時点灯)が近い。
-      // ここでは torch(点灯) / off をトグルする。
-      await CameraPreview.setFlashMode({ flashMode: flashOn ? 'torch' : 'off' });
+      const target = await refreshNativeFlashTarget();
+      flashOn = !previousFlashOn;
+      flashBtn.classList.toggle('active', flashOn);
+      if (target === 'screen') {
+        showToast(`画面フラッシュ ${flashOn ? 'ON' : 'OFF'}`);
+        return;
+      }
+      await CameraPreview.setFlashMode({ flashMode: flashOn ? target : 'off' });
     } catch (e) {
       showToast('フラッシュの切り替えに失敗しました');
-      flashOn = !flashOn;
+      flashOn = previousFlashOn;
       flashBtn.classList.toggle('active', flashOn);
+    } finally {
+      flashToggleInProgress = false;
     }
     return;
   }
@@ -458,9 +518,13 @@ async function toggleFlash() {
 // ── Camera flip ────────────────────────────────────────
 
 async function flipCamera() {
+  if (cameraFlipInProgress) return;
+  cameraFlipInProgress = true;
+  flipBtn.classList.add('disabled');
+
   // Turn off the rear torch before switching, while preserving the user's
   // ON/OFF selection for the destination camera.
-  if (flashOn && currentFacing === 'environment') {
+  if (flashOn && (useNativeCam ? nativeFlashTarget !== 'screen' : currentFacing === 'environment')) {
     try {
       if (useNativeCam) await CameraPreview.setFlashMode({ flashMode: 'off' });
       else {
@@ -475,32 +539,40 @@ async function flipCamera() {
   if (useNativeCam) {
     try {
       await CameraPreview.flip();
-      await applyBrightness(nativeExposureBias);
-    } catch (_) {
+    } catch (e) {
       // flipが使えない場合はプレビューを再起動して切替
       await initNativeCamera();
     }
-    if (flashOn && currentFacing === 'environment') {
+    await refreshNativeFlashTarget();
+    try { await applyBrightness(nativeExposureBias); } catch (_) {}
+    if (flashOn && nativeFlashTarget !== 'screen') {
       try {
-        await CameraPreview.setFlashMode({ flashMode: 'torch' });
+        await CameraPreview.setFlashMode({ flashMode: nativeFlashTarget });
       } catch (_) {
         flashOn = false;
         flashBtn.classList.remove('active');
         showToast('フラッシュの切り替えに失敗しました');
       }
     }
+    cameraFlipInProgress = false;
+    flipBtn.classList.remove('disabled');
     return;
   }
-  await initCamera();
-  if (flashOn && currentFacing === 'environment') {
-    try {
-      const track = stream?.getVideoTracks()[0];
-      if (track) await track.applyConstraints({ advanced: [{ torch: true }] });
-    } catch (_) {
-      flashOn = false;
-      flashBtn.classList.remove('active');
-      showToast('フラッシュの切り替えに失敗しました');
+  try {
+    await initCamera();
+    if (flashOn && currentFacing === 'environment') {
+      try {
+        const track = stream?.getVideoTracks()[0];
+        if (track) await track.applyConstraints({ advanced: [{ torch: true }] });
+      } catch (_) {
+        flashOn = false;
+        flashBtn.classList.remove('active');
+        showToast('フラッシュの切り替えに失敗しました');
+      }
     }
+  } finally {
+    cameraFlipInProgress = false;
+    flipBtn.classList.remove('disabled');
   }
 }
 
