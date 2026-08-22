@@ -28,6 +28,7 @@ let countdownTimer = null;
 let recordingTimer = null;
 let recordingSeconds = 0;
 let nativeShutterSuppressionSupported = false;
+let nativeShutterAlwaysAudible = false;
 let nativeFlashTarget = 'torch'; // 'screen' | 'torch' | 'on'
 let cameraFlipInProgress = false;
 let flashToggleInProgress = false;
@@ -86,6 +87,16 @@ async function playShutterSound() {
     showToast('撮影音の再生に失敗しました', 5000);
     return false;
   }
+}
+
+function updateCaptureSoundStatus() {
+  if (nativeShutterAlwaysAudible) {
+    captureSoundStatus.textContent = 'iPad：撮影音あり';
+    return;
+  }
+  captureSoundStatus.textContent = nativeShutterSuppressionSupported
+    ? 'iPhone：マナーモード連動'
+    : 'iPhone：マナーモード連動（静音撮影）';
 }
 
 function wait(ms) {
@@ -290,9 +301,14 @@ async function initNativeCamera() {
       nativeShutterSuppressionSupported = false;
       console.warn('Unable to read shutter-sound suppression support', e);
     }
-    captureSoundStatus.textContent = nativeShutterSuppressionSupported
-      ? 'マナーモード連動'
-      : 'マナーモード連動（静音撮影）';
+    try {
+      const policy = await ShutterSound.getPlaybackPolicy();
+      nativeShutterAlwaysAudible = policy?.alwaysAudible === true;
+    } catch (e) {
+      nativeShutterAlwaysAudible = false;
+      console.warn('Unable to read shutter-sound playback policy', e);
+    }
+    updateCaptureSoundStatus();
     // フラッシュはネイティブで制御。既定OFF。
     flashSupported = true;
     flashBtn.classList.remove('disabled');
@@ -388,7 +404,7 @@ function capturePhoto() {
 // ネイティブ写真撮影:
 // - 抑制API対応時はAVCapturePhotoOutputを使い、内蔵音を抑制する。
 // - 非対応時はAVCaptureVideoDataOutputの現在フレームを保存し、内蔵音を発生させない。
-// どちらもアプリ側の撮影音だけを使うため、通常時は鳴り、消音時は端末設定に従う。
+// どちらもアプリ側の撮影音を使う。iPhoneは消音設定に従い、iPadは常に再生する。
 async function captureNativePhoto() {
   let frontScreenFlashActive = false;
   try {
@@ -411,7 +427,7 @@ async function captureNativePhoto() {
     frontScreenFlashActive = false;
     if (nativeShutterSuppressionSupported && shutterSoundSuppressed !== true) {
       nativeShutterSuppressionSupported = false;
-      captureSoundStatus.textContent = 'マナーモード連動（静音撮影）';
+      updateCaptureSoundStatus();
     }
     const img = new Image();
     img.onload = () => {

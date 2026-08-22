@@ -12,7 +12,7 @@
 
 ## 説明文
 
-ZERO Cameraは、端末のマナーモードに合わせて静かに撮影できる、シンプルなカメラアプリです。
+ZERO Cameraは、iPhoneのマナーモードに合わせて静かに撮影できる、シンプルなカメラアプリです。iPadでは撮影を明示するため、消音設定にかかわらず撮影音が鳴ります。
 
 通常モードでは撮影時にシャッター音が鳴り、撮影したことをお知らせします。静かに撮影したいときは、iPhoneをマナーモードにしてください。マナー撮影はiPhoneをマナーモードに！
 
@@ -23,7 +23,7 @@ ZERO Cameraは、端末のマナーモードに合わせて静かに撮影でき
 主な機能
 ・写真撮影
 ・音声付き動画撮影
-・マナーモードに連動した撮影音
+・iPhoneのマナーモードに連動した撮影音（iPadでは常時再生）
 ・前面／背面カメラの切り替え
 ・ズーム調整
 ・明るさ調整
@@ -47,16 +47,17 @@ ZERO Cameraは、端末のマナーモードに合わせて静かに撮影でき
 
 （変更履歴：2026-07-26「静音」を外し「ペット,赤ちゃん」を追加。審査対策＋用途訴求）
 
-## App Review Notes（静音フォールバック対応版）
+## App Review Notes（build 42・iPad常時撮影音対応版）
 
 This is a camera application supporting photo and video capture. No login is required.
 
-IMPORTANT — About the shutter sound and capture implementation (Guideline 2.5.14):
-The app plays its own audible shutter sound in normal sound mode. This app sound uses the ambient audio category and follows the user's system-controlled Silent Mode setting on both iPhone and iPad.
+IMPORTANT — Guideline 2.5.14 changes in build 42:
+- On iPad, every photo capture plays the app-managed shutter sound using the playback audio category. The sound plays even when iPad Silent Mode is enabled.
+- On iPhone, the app-managed shutter sound uses the ambient audio category and follows the user's Ring/Silent setting. The mandatory visual capture indicators remain visible in both modes.
 
 For transparency, the photo implementation has two paths:
-- When AVFoundation reports that system shutter-sound suppression is supported, the app uses AVCapturePhotoOutput with Apple's documented suppression setting and plays the app-managed shutter sound described above.
-- When that suppression is unavailable for the current device or jurisdiction, the app saves the current AVCaptureVideoDataOutput frame instead of invoking AVCapturePhotoOutput. This avoids generating a built-in system shutter sound. The same app-managed shutter sound and visible indicators are used.
+- When AVFoundation reports that system shutter-sound suppression is supported, the app uses AVCapturePhotoOutput with Apple's documented suppression setting and plays the app-managed shutter sound described above. On iPad, this app-managed sound is always audible regardless of Silent Mode.
+- When that suppression is unavailable for the current device or jurisdiction, the app saves the current AVCaptureVideoDataOutput frame instead of invoking AVCapturePhotoOutput. The same app-managed shutter sound policy and visible indicators are used; on iPad the app-managed sound is always audible.
 
 A demo video recorded on a physical iPhone, showing the shutter sound and all indicators, is available here: [DEMO VIDEO URL]
 
@@ -73,9 +74,9 @@ Front-camera flash:
 
 To test:
 1. Launch the app, acknowledge the first-launch notice, and allow Camera / Microphone / Add Photos permissions.
-2. Disable Silent Mode and raise the media volume, then take a photo. The app-managed shutter sound plays together with the white flash and the "Photo Captured" indicator.
-3. Enable Silent Mode and take a photo. The app-managed sound is muted by the user's setting, while the white flash and "Photo Captured" indicator remain visible.
-4. Repeat on iPad using its system sound controls. The same Silent Mode-linked behavior and visual indicators apply.
+2. On iPad, raise the media volume, enable Silent Mode, and take a photo. The app-managed shutter sound still plays together with the white flash and "Photo Captured" indicator.
+3. On iPhone, switch to Ring mode and take a photo. The app-managed shutter sound plays. Switch to Silent Mode and repeat; the sound follows the user's setting while the mandatory visual indicators remain visible.
+4. On both iPhone and iPad, confirm the first-launch notice accurately describes the device-specific shutter-sound behavior.
 5. Switch to Video and record a short clip. The red Recording indicator and timer stay visible, and the saved video contains audio.
 6. Select Save to add the captured media to the photo library.
 
