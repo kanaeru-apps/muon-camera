@@ -1,5 +1,12 @@
 'use strict';
 
+// Release builds do not write native errors, paths, or device details to the
+// console. Set this to true only in a local diagnostic build.
+const DEBUG_LOGS = false;
+function debugLog(message) {
+  if (DEBUG_LOGS) console.debug(message);
+}
+
 // ── State ──────────────────────────────────────────────
 let stream = null;
 let currentFacing = 'environment';
@@ -27,6 +34,11 @@ let isBurst = false;
 let countdownTimer = null;
 let recordingTimer = null;
 let recordingSeconds = 0;
+let nativeShutterSuppressionSupported = false;
+let nativeShutterAlwaysAudible = false;
+let nativeFlashTarget = 'torch'; // 'screen' | 'torch' | 'on'
+let cameraFlipInProgress = false;
+let flashToggleInProgress = false;
 
 // ── DOM ────────────────────────────────────────────────
 const video          = document.getElementById('video');
@@ -34,11 +46,13 @@ const captureCanvas  = document.getElementById('capture-canvas');
 const gridCanvas     = document.getElementById('grid-canvas');
 const countdownEl    = document.getElementById('countdown-display');
 const toast          = document.getElementById('toast');
+const shutterFlash   = document.getElementById('shutter-flash');
 
 const ratioBtn       = document.getElementById('ratio-btn');
 const ratioBox       = document.getElementById('ratio-box');
 const viewfinder     = document.getElementById('viewfinder');
 const flashBtn       = document.getElementById('flash-btn');
+const flashLabel     = flashBtn.querySelector('.label');
 const timerBtn       = document.getElementById('timer-btn');
 const gridBtn        = document.getElementById('grid-btn');
 const brightnessSlider = document.getElementById('brightness-slider');
@@ -48,6 +62,7 @@ const shutterIcon    = document.getElementById('shutter-icon');
 const flipBtn        = document.getElementById('flip-btn');
 const thumbnailBtn   = document.getElementById('thumbnail-btn');
 const thumbnailImg   = document.getElementById('thumbnail-img');
+const captureSoundStatus = document.getElementById('capture-sound-status');
 
 // ── Native plugins (iOS only) ───────────────────────────
 // ネイティブアプリ実行時のみ有効。Web版では何もしない（従来通りの挙動にフォールバック）。
@@ -69,8 +84,104 @@ let nativeExposureBias = 0;   // ネイティブカメラの露出補正(EV)
 let recState = 'idle';
 let recFinalizedForCurrent = false;
 
-function playShutterSound() {
-  if (ShutterSound) ShutterSound.play().catch(() => {});
+async function playShutterSound() {
+  if (!ShutterSound) return true;
+  try {
+    await ShutterSound.play();
+    return true;
+  } catch (e) {
+    debugLog('Failed to play the app shutter sound');
+    showToast('撮影音の再生に失敗しました', 5000);
+    return false;
+  }
+}
+
+function updateCaptureSoundStatus() {
+  if (nativeShutterAlwaysAudible) {
+    captureSoundStatus.textContent = 'iPad：撮影音あり';
+    return;
+  }
+  captureSoundStatus.textContent = nativeShutterSuppressionSupported
+    ? 'iPhone：マナーモード連動'
+    : 'iPhone：マナーモード連動（静音撮影）';
+}
+
+function wait(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function beginFrontScreenFlash() {
+  const shouldUseScreenFlash = useNativeCam
+    ? nativeFlashTarget === 'screen'
+    : currentFacing === 'user';
+  if (!flashOn || !shouldUseScreenFlash) return false;
+
+  shutterFlash.classList.add('screen-flash-active');
+  if (ShutterSound) {
+    try { await ShutterSound.beginScreenFlash(); } catch (_) {}
+  }
+  // Give the display light and the front camera's auto exposure time to settle.
+  await wait(250);
+  return true;
+}
+
+async function endFrontScreenFlash(active) {
+  if (!active) return;
+  shutterFlash.classList.remove('screen-flash-active');
+  shutterFlash.style.opacity = '0';
+  if (ShutterSound) {
+    try { await ShutterSound.endScreenFlash(); } catch (_) {}
+  }
+}
+
+function updateFlashUIForCamera() {
+  const usesScreenFlash = useNativeCam
+    ? nativeFlashTarget === 'screen'
+    : currentFacing === 'user';
+  flashLabel.textContent = usesScreenFlash ? '画面フラッシュ' : 'フラッシュ';
+  flashBtn.setAttribute('aria-label', usesScreenFlash ? '画面フラッシュ' : 'フラッシュ');
+}
+
+async function syncNativeFacingFromDevice() {
+  if (!useNativeCam) return currentFacing;
+  try {
+    const [{ deviceId }, { devices }] = await Promise.all([
+      CameraPreview.getDeviceId(),
+      CameraPreview.getAvailableDevices()
+    ]);
+    const activeDevice = devices?.find(device => device.deviceId === deviceId);
+    if (activeDevice?.position === 'front') currentFacing = 'user';
+    if (activeDevice?.position === 'rear') currentFacing = 'environment';
+  } catch (e) {
+    // Keep the last known value on older plugin/device combinations.
+    debugLog('Unable to synchronize active camera position');
+  }
+  return currentFacing;
+}
+
+async function refreshNativeFlashTarget() {
+  if (!useNativeCam) return currentFacing === 'user' ? 'screen' : 'torch';
+
+  const facing = await syncNativeFacingFromDevice();
+  if (facing === 'user') {
+    nativeFlashTarget = 'screen';
+    updateFlashUIForCamera();
+    return nativeFlashTarget;
+  }
+
+  try {
+    const { result = [] } = await CameraPreview.getSupportedFlashModes();
+    if (result.includes('torch')) nativeFlashTarget = 'torch';
+    else if (result.includes('on')) nativeFlashTarget = 'on';
+    else nativeFlashTarget = 'screen';
+  } catch (e) {
+    // Rear iPhones normally support torch. Preserve the prior behavior if the
+    // capability query itself is unavailable.
+    nativeFlashTarget = 'torch';
+    debugLog('Unable to read supported flash modes');
+  }
+  updateFlashUIForCamera();
+  return nativeFlashTarget;
 }
 
 // ネイティブプレビューを撮影画面全体に敷く（UIは透過したWebViewが上に重なる）。
@@ -137,8 +248,9 @@ async function initCamera() {
     const caps = track.getCapabilities ? track.getCapabilities() : {};
 
     // Flash
-    flashSupported = !!caps.torch;
+    flashSupported = currentFacing === 'user' || !!caps.torch;
     flashBtn.classList.toggle('disabled', !flashSupported);
+    updateFlashUIForCamera();
     if (!flashSupported && flashOn) {
       flashOn = false;
       flashBtn.classList.remove('active');
@@ -165,12 +277,13 @@ async function initCamera() {
 
     // Mirror front camera
     video.style.transform = currentFacing === 'user' ? 'scaleX(-1)' : '';
+    captureSoundStatus.textContent = 'ブラウザ撮影';
 
     // Apply ratio box after stream layout settles
     requestAnimationFrame(applyRatioBox);
 
   } catch (err) {
-    console.error(err);
+    debugLog('Unable to initialize the browser camera');
     showToast('カメラへのアクセスが許可されていません');
   }
 }
@@ -187,9 +300,26 @@ async function initNativeCamera() {
   try {
     await CameraPreview.start(nativeStartOptions());
     nativeCamStarted = true;
+    await refreshNativeFlashTarget();
+    try {
+      const support = await CameraPreview.getShutterSoundSuppressionSupport();
+      nativeShutterSuppressionSupported = support?.supported === true;
+    } catch (e) {
+      nativeShutterSuppressionSupported = false;
+      debugLog('Unable to read shutter-sound suppression support');
+    }
+    try {
+      const policy = await ShutterSound.getPlaybackPolicy();
+      nativeShutterAlwaysAudible = policy?.alwaysAudible === true;
+    } catch (e) {
+      nativeShutterAlwaysAudible = false;
+      debugLog('Unable to read shutter-sound playback policy');
+    }
+    updateCaptureSoundStatus();
     // フラッシュはネイティブで制御。既定OFF。
     flashSupported = true;
     flashBtn.classList.remove('disabled');
+    updateFlashUIForCamera();
     // ズームは setZoom で制御。スライダー範囲を設定。
     hwZoomSupported = true;
     try {
@@ -223,7 +353,8 @@ async function initNativeCamera() {
       brightnessSlider.value = 0;
     }
   } catch (err) {
-    showToast('カメラの起動に失敗: ' + (err?.message || err), 8000);
+    debugLog('Native camera initialization failed');
+    showToast('カメラの起動に失敗しました', 8000);
   }
 }
 
@@ -278,16 +409,36 @@ function capturePhoto() {
   }, 'image/jpeg', 0.95);
 }
 
-// ネイティブ無音撮影: Previewの1フレームを取得して選択画角にトリミングする。
-// AVCapturePhotoOutputを使うcapture()は、日本向けiPhoneではマナーモードでも
-// OS標準シャッター音が鳴るため使用しない。captureSample()は動画フレーム取得なので
-// OSの写真撮影音を発生させず、通常モード用の音はplayShutterSound()だけで制御する。
+// ネイティブ写真撮影:
+// - 抑制API対応時はAVCapturePhotoOutputを使い、内蔵音を抑制する。
+// - 非対応時はAVCaptureVideoDataOutputの現在フレームを保存し、内蔵音を発生させない。
+// どちらもアプリ側の撮影音を使う。iPhoneは消音設定に従い、iPadは常に再生する。
 async function captureNativePhoto() {
+  let frontScreenFlashActive = false;
   try {
-    const { value } = await CameraPreview.captureSample({
-      quality: 100,
-      mirrorFrontCamera: currentFacing === 'user'
-    });
+    await refreshNativeFlashTarget();
+    frontScreenFlashActive = await beginFrontScreenFlash();
+    await playShutterSound();
+    const captureResult = nativeShutterSuppressionSupported
+      ? await CameraPreview.capture({
+          quality: 100,
+          photoQualityPrioritization: 'balanced',
+          mirrorFrontCamera: currentFacing === 'user',
+          withExifLocation: false,
+          embedLocation: false,
+          suppressShutterSound: true
+        })
+      : await CameraPreview.captureSample({
+          quality: 100,
+          mirrorFrontCamera: currentFacing === 'user'
+        });
+    const { value, shutterSoundSuppressed } = captureResult;
+    await endFrontScreenFlash(frontScreenFlashActive);
+    frontScreenFlashActive = false;
+    if (nativeShutterSuppressionSupported && shutterSoundSuppressed !== true) {
+      nativeShutterSuppressionSupported = false;
+      updateCaptureSoundStatus();
+    }
     const img = new Image();
     img.onload = () => {
       const iw = img.naturalWidth, ih = img.naturalHeight;
@@ -308,48 +459,71 @@ async function captureNativePhoto() {
       captureCanvas.toBlob(blob => {
         setCapture('photo', blob, 'image/jpeg');
         flashShutter();
-        playShutterSound();
         if (!isBurst) showPreview();
       }, 'image/jpeg', 0.95);
     };
     img.onerror = () => showToast('撮影画像の読み込みに失敗しました');
     img.src = 'data:image/jpeg;base64,' + value;
   } catch (e) {
-    showToast('撮影に失敗: ' + (e?.message || e), 6000);
+    await endFrontScreenFlash(frontScreenFlashActive);
+    debugLog('Native photo capture failed');
+    showToast('撮影に失敗しました', 6000);
   }
 }
 
 function flashShutter() {
   // ガイドライン2.5.14対応: 撮影(=記録)したことを視覚的に明示する。
   // マナーモード中も、白フラッシュと明示メッセージで撮影を通知する。
-  const flash = document.getElementById('shutter-flash');
   const captureIndicator = document.getElementById('photo-capture-indicator');
-  flash.style.opacity = '0.7';
-  setTimeout(() => { flash.style.opacity = '0'; }, 150);
+  shutterFlash.style.opacity = '0.7';
+  setTimeout(() => { shutterFlash.style.opacity = '0'; }, 150);
+  cameraScreen.classList.add('photo-captured');
+  clearTimeout(flashShutter.frameTimer);
+  flashShutter.frameTimer = setTimeout(() => {
+    cameraScreen.classList.remove('photo-captured');
+  }, 1500);
   // Keep an explicit, non-configurable in-app indication visible long enough
   // to be perceived even when the photo preview opens immediately.
   captureIndicator.classList.remove('hidden');
   clearTimeout(flashShutter.indicatorTimer);
   flashShutter.indicatorTimer = setTimeout(() => {
     captureIndicator.classList.add('hidden');
-  }, 1200);
+  }, 1500);
 }
 
 // ── Flash ──────────────────────────────────────────────
 
 async function toggleFlash() {
   if (useNativeCam) {
-    flashOn = !flashOn;
-    flashBtn.classList.toggle('active', flashOn);
+    if (cameraFlipInProgress) {
+      showToast('カメラの切り替え完了後に操作してください');
+      return;
+    }
+    if (flashToggleInProgress) return;
+    flashToggleInProgress = true;
+    const previousFlashOn = flashOn;
     try {
-      // 写真は撮影時にフラッシュ発光、動画はtorch(常時点灯)が近い。
-      // ここでは torch(点灯) / off をトグルする。
-      await CameraPreview.setFlashMode({ flashMode: flashOn ? 'torch' : 'off' });
+      const target = await refreshNativeFlashTarget();
+      flashOn = !previousFlashOn;
+      flashBtn.classList.toggle('active', flashOn);
+      if (target === 'screen') {
+        showToast(`画面フラッシュ ${flashOn ? 'ON' : 'OFF'}`);
+        return;
+      }
+      await CameraPreview.setFlashMode({ flashMode: flashOn ? target : 'off' });
     } catch (e) {
       showToast('フラッシュの切り替えに失敗しました');
-      flashOn = !flashOn;
+      flashOn = previousFlashOn;
       flashBtn.classList.toggle('active', flashOn);
+    } finally {
+      flashToggleInProgress = false;
     }
+    return;
+  }
+  if (currentFacing === 'user') {
+    flashOn = !flashOn;
+    flashBtn.classList.toggle('active', flashOn);
+    showToast(`画面フラッシュ ${flashOn ? 'ON' : 'OFF'}`);
     return;
   }
   if (!flashSupported) {
@@ -371,30 +545,62 @@ async function toggleFlash() {
 // ── Camera flip ────────────────────────────────────────
 
 async function flipCamera() {
-  // Turn off flash before switching
-  if (flashOn) {
-    flashOn = false;
-    flashBtn.classList.remove('active');
-    if (!useNativeCam) {
-      try {
+  if (cameraFlipInProgress) return;
+  cameraFlipInProgress = true;
+  flipBtn.classList.add('disabled');
+
+  // Turn off the rear torch before switching, while preserving the user's
+  // ON/OFF selection for the destination camera.
+  if (flashOn && (useNativeCam ? nativeFlashTarget !== 'screen' : currentFacing === 'environment')) {
+    try {
+      if (useNativeCam) await CameraPreview.setFlashMode({ flashMode: 'off' });
+      else {
         const track = stream?.getVideoTracks()[0];
         if (track) await track.applyConstraints({ advanced: [{ torch: false }] });
-      } catch (_) {}
-    }
+      }
+    } catch (_) {}
   }
   currentFacing = currentFacing === 'environment' ? 'user' : 'environment';
+  updateFlashUIForCamera();
 
   if (useNativeCam) {
     try {
       await CameraPreview.flip();
-      await applyBrightness(nativeExposureBias);
-    } catch (_) {
+    } catch (e) {
       // flipが使えない場合はプレビューを再起動して切替
       await initNativeCamera();
     }
+    await refreshNativeFlashTarget();
+    try { await applyBrightness(nativeExposureBias); } catch (_) {}
+    if (flashOn && nativeFlashTarget !== 'screen') {
+      try {
+        await CameraPreview.setFlashMode({ flashMode: nativeFlashTarget });
+      } catch (_) {
+        flashOn = false;
+        flashBtn.classList.remove('active');
+        showToast('フラッシュの切り替えに失敗しました');
+      }
+    }
+    cameraFlipInProgress = false;
+    flipBtn.classList.remove('disabled');
     return;
   }
-  await initCamera();
+  try {
+    await initCamera();
+    if (flashOn && currentFacing === 'environment') {
+      try {
+        const track = stream?.getVideoTracks()[0];
+        if (track) await track.applyConstraints({ advanced: [{ torch: true }] });
+      } catch (_) {
+        flashOn = false;
+        flashBtn.classList.remove('active');
+        showToast('フラッシュの切り替えに失敗しました');
+      }
+    }
+  } finally {
+    cameraFlipInProgress = false;
+    flipBtn.classList.remove('disabled');
+  }
 }
 
 // ── Timer ──────────────────────────────────────────────
@@ -644,7 +850,9 @@ async function startRecording() {
       startRecordingIndicator();
     } catch (e) {
       recState = 'idle';
-      showToast('録画開始に失敗: ' + (e?.message || e), 6000);
+      stopRecordingIndicator();
+      debugLog('Native recording start failed');
+      showToast('録画を開始できませんでした', 6000);
     }
     return;
   }
@@ -682,7 +890,8 @@ async function stopRecording() {
       // stopRecordVideoの拒否は「録画がエラー終了した」or「既に録画していない」を意味する
       // （recStateガードで多重停止は起きないため、録画継続中の拒否は実質発生しない）。
       // 録画中UIのまま固まらないよう、失敗として終了処理する。
-      showToast('録画に失敗しました: ' + (e?.message || e), 6000);
+      debugLog('Native recording stop failed');
+      showToast('録画に失敗しました', 6000);
       onNativeRecordingFinished(null);
     }
     return;
@@ -724,6 +933,13 @@ function startRecordingIndicator() {
   recordingSeconds = 0;
   recordingTimeEl.textContent = '00:00';
   recordingIndicator.classList.remove('hidden');
+  cameraScreen.classList.add('recording-active');
+  if (ShutterSound) {
+    ShutterSound.setRecordingActive({ active: true }).catch(e => {
+      debugLog('Failed to disable the idle timer while recording');
+      showToast('録画中の画面維持を有効にできませんでした', 5000);
+    });
+  }
   recordingTimer = setInterval(() => {
     recordingSeconds++;
     const m = String(Math.floor(recordingSeconds / 60)).padStart(2, '0');
@@ -735,6 +951,12 @@ function startRecordingIndicator() {
 function stopRecordingIndicator() {
   clearInterval(recordingTimer);
   recordingIndicator.classList.add('hidden');
+  cameraScreen.classList.remove('recording-active');
+  if (ShutterSound) {
+    ShutterSound.setRecordingActive({ active: false }).catch(e => {
+      debugLog('Failed to restore the idle timer after recording');
+    });
+  }
 }
 
 // ── Capture management ─────────────────────────────────
@@ -842,7 +1064,8 @@ saveBtn.addEventListener('click', async () => {
       showToast('写真ライブラリに保存しました');
       returnToCamera();
     } catch (e) {
-      showToast('保存に失敗: ' + (e?.message || e), 8000);
+      debugLog('Native video save failed');
+      showToast('保存に失敗しました', 8000);
     }
     return;
   }
@@ -857,7 +1080,8 @@ saveBtn.addEventListener('click', async () => {
       showToast('写真ライブラリに保存しました');
       returnToCamera(); // 保存後は自動でカメラに戻る
     } catch (e) {
-      showToast('保存に失敗: ' + (e?.message || e), 8000);
+      debugLog('Native photo save failed');
+      showToast('保存に失敗しました', 8000);
     }
     return;
   }
@@ -881,7 +1105,7 @@ saveBtn.addEventListener('click', async () => {
 
   // ② iOS フォールバック：新タブで画像を開き長押し保存を案内
   if (isIOS) {
-    window.open(capturedUrl, '_blank');
+    window.open(capturedUrl, '_blank', 'noopener,noreferrer');
     showToast('画像を長押し →「写真に追加」で保存');
     return;
   }
@@ -1056,7 +1280,9 @@ viewfinder.addEventListener('touchmove', e => {
 // ネイティブアプリ(Capacitor)ではアセットをローカルから読むため不要で、
 // むしろ Cache First がアプリ更新後も古いJS/CSSを配信し続けるリスクがあるため登録しない。
 if (!isNativeApp && 'serviceWorker' in navigator) {
-  navigator.serviceWorker.register('./sw.js').catch(console.error);
+  navigator.serviceWorker.register('./sw.js').catch(() => {
+    debugLog('Service worker registration failed');
+  });
 }
 
 // ── Start ──────────────────────────────────────────────
@@ -1069,10 +1295,15 @@ if (useNativeCam && CameraPreview.addListener) {
   });
 }
 
+// 画面が非表示になると、ユーザーが録画状態を視認できなくなるため録画を終了する。
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden && isRecording) stopRecording();
+});
+
 // ガイドライン2.5.14対応: 初回起動時に「撮影表示は無効化できない・通常時は
-// シャッター音が鳴る・マナーモード時は端末設定に従う」ことを明示し同意を得る。
+// シャッター音が鳴る・消音撮影はシステムが許可する端末だけ」と明示し同意を得る。
 // 同意後にカメラを起動する(=カメラ権限ダイアログも同意後に出る)。
-const USAGE_NOTICE_KEY = 'zerocam-usage-notice-v1';
+const USAGE_NOTICE_KEY = 'zerocam-usage-notice-v2';
 
 function startCamera() {
   initCamera();

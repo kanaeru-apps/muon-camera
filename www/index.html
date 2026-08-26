@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: capacitor:; media-src 'self' data: blob: capacitor:; connect-src 'self'; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="ZERO Camera">
@@ -10,7 +11,7 @@
   <title>ZERO Camera</title>
   <link rel="manifest" href="./manifest.json">
   <link rel="apple-touch-icon" href="./icons/icon.svg">
-  <link rel="stylesheet" href="./css/style.css">
+  <link rel="stylesheet" href="./css/style.css?v=17">
 </head>
 <body>
 
@@ -63,9 +64,13 @@
       <div id="ratio-box">
         <video id="video" autoplay playsinline muted></video>
         <canvas id="grid-canvas"></canvas>
+        <div id="capture-activity-frame" aria-hidden="true"></div>
         <div id="camera-active-indicator" aria-live="polite">
           <span class="camera-active-dot"></span>
-          <span>カメラ使用中</span>
+          <span class="camera-active-copy">
+            <strong>カメラ使用中</strong>
+            <span id="capture-sound-status">撮影音を確認中</span>
+          </span>
         </div>
         <div id="countdown-display"></div>
         <div id="recording-indicator" class="hidden" aria-live="polite">
@@ -131,7 +136,10 @@
   <!-- Global so it remains visible while the captured-photo preview opens. -->
   <div id="photo-capture-indicator" class="hidden" role="status" aria-live="assertive">
     <span class="photo-capture-mark">✓</span>
-    <span>写真を撮影しました</span>
+    <span class="photo-capture-copy">
+      <strong>写真を撮影しました</strong>
+      <span>撮影表示はオフにできません</span>
+    </span>
   </div>
 
   <!-- ===== PREVIEW SCREEN ===== -->
@@ -175,9 +183,9 @@
     <div class="notice-card">
       <h1 id="notice-title">ご利用の前に</h1>
       <ul class="notice-list">
-        <li><span class="notice-icon">📸</span>撮影・録画時は、画面に必ず表示（白フラッシュ・撮影確認・録画中表示）が出ます。この表示はオフにできません。</li>
+        <li><span class="notice-icon">📸</span>カメラ使用中は画面全周の枠と状態表示が常に出ます。写真撮影・動画録画の表示はオフにできません。</li>
         <li><span class="notice-icon">🔔</span>通常モードでは、撮影時にシャッター音が鳴ります。</li>
-        <li><span class="notice-icon">🔕</span>端末がマナーモード（消音）のときは、シャッター音は端末の設定に従って静かになります。</li>
+        <li><span class="notice-icon">🔕</span>iPhoneの撮影音は消音モードに連動します。iPadでは撮影を明示するため、消音設定にかかわらず撮影音が鳴ります。</li>
         <li><span class="notice-icon">🔒</span>撮影した写真・動画は端末内で処理され、外部に送信されません。</li>
       </ul>
       <p class="notice-manner">周囲のマナーと被写体のプライバシーに配慮してご利用ください。</p>
@@ -192,6 +200,6 @@
   <div id="toast"></div>
 
   <script src="./js/capacitor.js"></script>
-  <script src="./js/app.js"></script>
+  <script src="./js/app.js?v=17"></script>
 </body>
 </html>
