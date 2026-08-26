@@ -18,7 +18,8 @@ public class PhotoSaverPlugin: CAPPlugin, CAPBridgedPlugin {
     public let jsName = "PhotoSaver"
     public let pluginMethods: [CAPPluginMethod] = [
         CAPPluginMethod(name: "save", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "saveFile", returnType: CAPPluginReturnPromise)
+        CAPPluginMethod(name: "saveFile", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "cleanupOrphanedCaptures", returnType: CAPPluginReturnPromise)
     ]
 
     @objc func save(_ call: CAPPluginCall) {
@@ -106,6 +107,48 @@ public class PhotoSaverPlugin: CAPPlugin, CAPBridgedPlugin {
                 call.reject("写真へのアクセス許可が未確定です。もう一度お試しください")
             }
         }
+    }
+
+    /**
+     * 前回の異常終了などでDocuments直下に残ったネイティブ録画の一時ファイルを削除する。
+     * 対象を通常ファイルかつ cpcp_video_*.mp4 に限定し、リンクは追跡しない。
+     */
+    @objc func cleanupOrphanedCaptures(_ call: CAPPluginCall) {
+        guard let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?
+            .standardizedFileURL else {
+            call.resolve(["removed": 0])
+            return
+        }
+
+        let requestedKeys: Set<URLResourceKey> = [.isRegularFileKey, .isSymbolicLinkKey]
+        let contents = (try? FileManager.default.contentsOfDirectory(
+            at: documentsDirectory,
+            includingPropertiesForKeys: Array(requestedKeys),
+            options: [.skipsHiddenFiles]
+        )) ?? []
+
+        var removed = 0
+        for fileURL in contents {
+            let candidate = fileURL.standardizedFileURL
+            let resourceValues = try? candidate.resourceValues(forKeys: requestedKeys)
+            guard candidate.deletingLastPathComponent().path == documentsDirectory.path,
+                  candidate.lastPathComponent.hasPrefix("cpcp_video_"),
+                  candidate.pathExtension.lowercased() == "mp4",
+                  resourceValues?.isRegularFile == true,
+                  resourceValues?.isSymbolicLink != true else {
+                continue
+            }
+
+            do {
+                try FileManager.default.removeItem(at: candidate)
+                removed += 1
+            } catch {
+                // Continue cleaning other known capture files. Do not expose or log
+                // private file paths; a later cold start will retry failed removals.
+            }
+        }
+
+        call.resolve(["removed": removed])
     }
 
     private func savePhoto(_ data: Data, call: CAPPluginCall) {

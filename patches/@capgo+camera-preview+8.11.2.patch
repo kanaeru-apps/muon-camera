@@ -35,7 +35,7 @@ index 3cac034..c6da63f 100644
      /**
       * Captures a single frame from the camera preview stream.
 diff --git a/node_modules/@capgo/camera-preview/ios/Sources/CapgoCameraPreviewPlugin/CameraController.swift b/node_modules/@capgo/camera-preview/ios/Sources/CapgoCameraPreviewPlugin/CameraController.swift
-index 26e1b3e..a3682cb 100644
+index 26e1b3e..82d7cd8 100644
 --- a/node_modules/@capgo/camera-preview/ios/Sources/CapgoCameraPreviewPlugin/CameraController.swift
 +++ b/node_modules/@capgo/camera-preview/ios/Sources/CapgoCameraPreviewPlugin/CameraController.swift
 @@ -659,7 +659,7 @@ extension CameraController {
@@ -103,7 +103,37 @@ index 26e1b3e..a3682cb 100644
          }
  
          // Apply the current flash mode to the photo settings
-@@ -3492,7 +3515,7 @@ extension CameraController: AVCaptureFileOutputRecordingDelegate {
+@@ -3472,7 +3495,29 @@ extension UIImage {
+ }
+ 
+ extension CameraController: AVCaptureFileOutputRecordingDelegate {
++    /// Movie recordings are temporary capture artifacts. The library writes them
++    /// to Documents, so exclude each file from device backups as soon as AVFoundation
++    /// starts writing it. Apply the flag again after finalization because some file
++    /// operations can reset resource values.
++    private func excludeTemporaryRecordingFromBackup(_ outputFileURL: URL) {
++        var fileURL = outputFileURL
++        var resourceValues = URLResourceValues()
++        resourceValues.isExcludedFromBackup = true
++        do {
++            try fileURL.setResourceValues(resourceValues)
++        } catch {
++            // Recording must remain usable even if the filesystem cannot persist
++            // this advisory attribute. Do not log the private capture path.
++            print("[CameraPreview] Failed to exclude temporary recording from backup")
++        }
++    }
++
++    func fileOutput(_ output: AVCaptureFileOutput, didStartRecordingTo outputFileURL: URL, from connections: [AVCaptureConnection]) {
++        excludeTemporaryRecordingFromBackup(outputFileURL)
++    }
++
+     func fileOutput(_ output: AVCaptureFileOutput, didFinishRecordingTo outputFileURL: URL, from connections: [AVCaptureConnection], error: Error?) {
++        excludeTemporaryRecordingFromBackup(outputFileURL)
+         let reason = recordingFinishReason(from: error)
+         let stopCompletion = self.stopRecordingCompletion
+         self.stopRecordingCompletion = nil
+@@ -3492,7 +3537,7 @@ extension CameraController: AVCaptureFileOutputRecordingDelegate {
              return
          }
  

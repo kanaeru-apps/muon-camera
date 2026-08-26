@@ -1305,8 +1305,18 @@ document.addEventListener('visibilitychange', () => {
 // 同意後にカメラを起動する(=カメラ権限ダイアログも同意後に出る)。
 const USAGE_NOTICE_KEY = 'zerocam-usage-notice-v2';
 
-function startCamera() {
-  initCamera();
+async function startCamera() {
+  // 前回の異常終了でDocumentsに残ったネイティブ録画を、次の録画開始前に回収する。
+  // startCameraは初回起動フローからだけ呼び出されるため、進行中の録画とは競合しない。
+  if (PhotoSaver && PhotoSaver.cleanupOrphanedCaptures) {
+    try {
+      await PhotoSaver.cleanupOrphanedCaptures();
+    } catch (_) {
+      // 回収失敗でカメラを使用不能にはしない。次回のコールドスタートで再試行する。
+      debugLog('Failed to clean up orphaned native recordings');
+    }
+  }
+  await initCamera();
   // Apply initial ratio box size after first layout paint
   requestAnimationFrame(() => requestAnimationFrame(applyRatioBox));
 }
