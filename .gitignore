@@ -1,6 +1,17 @@
 # Node
 node_modules/
 
+# Local secrets and signing material
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+*.mobileprovision
+*.cer
+
 # Capacitor iOS build artifacts (npx cap sync で www から再生成される)
 ios/App/App/public/
 ios/App/Pods/

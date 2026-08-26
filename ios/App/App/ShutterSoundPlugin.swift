@@ -67,7 +67,7 @@ public class ShutterSoundPlugin: CAPPlugin, CAPBridgedPlugin {
             }
             call.resolve()
         } catch {
-            call.reject("Failed to play shutter sound: \(error.localizedDescription)")
+            call.reject("Failed to play shutter sound")
         }
     }
 

@@ -35,9 +35,18 @@ index 3cac034..c6da63f 100644
      /**
       * Captures a single frame from the camera preview stream.
 diff --git a/node_modules/@capgo/camera-preview/ios/Sources/CapgoCameraPreviewPlugin/CameraController.swift b/node_modules/@capgo/camera-preview/ios/Sources/CapgoCameraPreviewPlugin/CameraController.swift
-index 26e1b3e..c4a8d61 100644
+index 26e1b3e..a3682cb 100644
 --- a/node_modules/@capgo/camera-preview/ios/Sources/CapgoCameraPreviewPlugin/CameraController.swift
 +++ b/node_modules/@capgo/camera-preview/ios/Sources/CapgoCameraPreviewPlugin/CameraController.swift
+@@ -659,7 +659,7 @@ extension CameraController {
+     }
+ 
+     func prepare(cameraPosition: String, deviceId: String? = nil, disableAudio: Bool, cameraMode: Bool, aspectRatio: String? = nil, aspectMode: String = "contain", initialZoomLevel: Float?, disableFocusIndicator: Bool = false, videoQuality: String = "high", completionHandler: @escaping (Error?) -> Void) {
+-        print("[CameraPreview] 🎬 Starting prepare - position: \(cameraPosition), deviceId: \(deviceId ?? "nil"), disableAudio: \(disableAudio), cameraMode: \(cameraMode), aspectRatio: \(aspectRatio ?? "nil"), aspectMode: \(aspectMode), zoom: \(initialZoomLevel ?? 1)")
++        print("[CameraPreview] 🎬 Starting camera preparation")
+ 
+         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+             guard let self = self else {
 @@ -1332,7 +1332,21 @@ extension CameraController {
          self.updateVideoOrientation()
      }
@@ -94,8 +103,17 @@ index 26e1b3e..c4a8d61 100644
          }
  
          // Apply the current flash mode to the photo settings
+@@ -3492,7 +3515,7 @@ extension CameraController: AVCaptureFileOutputRecordingDelegate {
+             return
+         }
+ 
+-        print("Movie recorded successfully: \(outputFileURL)")
++        print("Movie recorded successfully")
+         self.recordingFinishedCallback?(outputFileURL, reason)
+     }
+ 
 diff --git a/node_modules/@capgo/camera-preview/ios/Sources/CapgoCameraPreviewPlugin/Plugin.swift b/node_modules/@capgo/camera-preview/ios/Sources/CapgoCameraPreviewPlugin/Plugin.swift
-index e01ebf7..25a5ba7 100644
+index e01ebf7..f4daac0 100644
 --- a/node_modules/@capgo/camera-preview/ios/Sources/CapgoCameraPreviewPlugin/Plugin.swift
 +++ b/node_modules/@capgo/camera-preview/ios/Sources/CapgoCameraPreviewPlugin/Plugin.swift
 @@ -44,6 +44,7 @@ public class CameraPreview: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDelega
@@ -106,7 +124,15 @@ index e01ebf7..25a5ba7 100644
          CAPPluginMethod(name: "startBarcodeScanner", returnType: CAPPluginReturnPromise),
          CAPPluginMethod(name: "stopBarcodeScanner", returnType: CAPPluginReturnPromise),
          CAPPluginMethod(name: "getSupportedFlashModes", returnType: CAPPluginReturnPromise),
-@@ -877,10 +878,19 @@ public class CameraPreview: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDelega
+@@ -661,7 +662,6 @@ public class CameraPreview: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDelega
+         // Log all received settings
+         print("[CameraPreview] 📋 Settings received:")
+         print("  - position: \(call.getString("position") ?? "rear")")
+-        print("  - deviceId: \(call.getString("deviceId") ?? "nil")")
+         print("  - enableVideoMode: \(call.getBool("enableVideoMode") ?? call.getBool("cameraMode") ?? false)")
+         print("  - width: \(call.getInt("width") ?? 0)")
+         print("  - height: \(call.getInt("height") ?? 0)")
+@@ -877,10 +877,19 @@ public class CameraPreview: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDelega
          // Create and configure the preview view first
          self.updateCameraFrame()
  
@@ -130,21 +156,97 @@ index e01ebf7..25a5ba7 100644
          }
  
          // Make webview transparent
-@@ -1253,6 +1263,13 @@ public class CameraPreview: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDelega
-         }
+@@ -1184,78 +1193,23 @@ public class CameraPreview: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDelega
      }
  
+     @objc func capture(_ call: CAPPluginCall) {
+-        print("[CameraPreview] capture called with options: \(call.options ?? [:])")
+         let withExifLocation = call.getBool("withExifLocation", false)
+-        print("[CameraPreview] capture called, withExifLocation: \(withExifLocation)")
+-
+-        if withExifLocation {
+-            print("[CameraPreview] Location required for capture")
+-
+-            // Check location services before main thread dispatch
+-            guard CLLocationManager.locationServicesEnabled() else {
+-                print("[CameraPreview] Location services are disabled")
+-                call.reject("Location services are disabled")
+-                return
+-            }
+-
+-            // Check if Info.plist has the required key
+-            guard Bundle.main.object(forInfoDictionaryKey: "NSLocationWhenInUseUsageDescription") != nil else {
+-                print("[CameraPreview] ERROR: NSLocationWhenInUseUsageDescription key missing from Info.plist")
+-                call.reject("NSLocationWhenInUseUsageDescription key missing from Info.plist. Add this key with a description of how your app uses location.")
+-                return
+-            }
+-
+-            // Ensure location manager setup happens on main thread
+-            DispatchQueue.main.async {
+-                if self.locationManager == nil {
+-                    self.locationManager = CLLocationManager()
+-                    self.locationManager?.delegate = self
+-                    self.locationManager?.desiredAccuracy = kCLLocationAccuracyBest
+-                }
+-
+-                // Check current authorization status
+-                let currentStatus = self.locationManager?.authorizationStatus ?? .notDetermined
+-
+-                switch currentStatus {
+-                case .authorizedWhenInUse, .authorizedAlways:
+-                    // Already authorized, get location and capture
+-                    self.getCurrentLocation { _ in
+-                        self.performCapture(call: call)
+-                    }
+-
+-                case .denied, .restricted:
+-                    // Permission denied
+-                    print("[CameraPreview] Location permission denied")
+-                    call.reject("Location permission denied")
+-
+-                case .notDetermined:
+-                    // Need to request permission
+-                    print("[CameraPreview] Location permission not determined, requesting...")
+-                    // Save the call for the delegate callback
+-                    print("[CameraPreview] Saving call for location authorization flow")
+-                    self.bridge?.saveCall(call)
+-                    self.permissionCallID = call.callbackId
+-                    self.waitingForLocation = true
+-
+-                    // Request authorization - this will trigger locationManagerDidChangeAuthorization
+-                    print("[CameraPreview] Requesting location authorization...")
+-                    self.locationManager?.requestWhenInUseAuthorization()
+-                // The delegate will handle the rest
+-
+-                @unknown default:
+-                    print("[CameraPreview] Unknown authorization status")
+-                    call.reject("Unknown location permission status")
+-                }
+-            }
+-        } else {
+-            print("[CameraPreview] No location required, performing capture directly")
+-            self.performCapture(call: call)
++        guard withExifLocation != true else {
++            call.reject("Location metadata is disabled in ZERO Camera")
++            return
+         }
++        self.performCapture(call: call)
++    }
++
 +    @objc func getShutterSoundSuppressionSupport(_ call: CAPPluginCall) {
 +        call.resolve([
 +            "supported": self.cameraController.shutterSoundSuppressionCanBeEnabled(),
 +            "usesAlwaysAudibleAppSound": false
 +        ])
-+    }
-+
+     }
+ 
      private func performCapture(call: CAPPluginCall) {
          print("[CameraPreview] performCapture called")
-         print("[CameraPreview] Call parameters: \(call.options ?? [:])")
-@@ -1266,6 +1283,8 @@ public class CameraPreview: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDelega
+-        print("[CameraPreview] Call parameters: \(call.options ?? [:])")
+         let quality = call.getFloat("quality", 85)
+         let saveToGallery = call.getBool("saveToGallery", false)
+         let withExifLocation = call.getBool("withExifLocation", false)
+@@ -1266,11 +1220,12 @@ public class CameraPreview: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDelega
          let height = call.getInt("height")
          let photoQualityPrioritization = call.getString("photoQualityPrioritization", "speed")
          let mirrorFrontCamera = call.getBool("mirrorFrontCamera", false) ?? false
@@ -153,7 +255,12 @@ index e01ebf7..25a5ba7 100644
  
          print("[CameraPreview] Raw parameter values - width: \(String(describing: width)), height: \(String(describing: height))")
  
-@@ -1287,7 +1306,7 @@ public class CameraPreview: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDelega
+         print("[CameraPreview] Capture params - quality: \(quality), saveToGallery: \(saveToGallery), withExifLocation: \(withExifLocation ?? false), embedTimestamp: \(embedTimestamp), embedLocation: \(effectiveEmbedLocation) (requested=\(embedLocationRequested)), width: \(width ?? -1), height: \(height ?? -1), mirrorFrontCamera: \(mirrorFrontCamera)")
+-        print("[CameraPreview] Current location: \(self.currentLocation?.description ?? "nil")")
+         // Safely read frame from main thread for logging
+         let (previewWidth, previewHeight): (CGFloat, CGFloat) = {
+             if Thread.isMainThread {
+@@ -1287,7 +1242,7 @@ public class CameraPreview: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDelega
          print("[CameraPreview] Preview dimensions: \(previewWidth)x\(previewHeight)")
  
          let gpsForThisCapture = (withExifLocation ?? false) ? self.currentLocation : nil
@@ -162,7 +269,7 @@ index e01ebf7..25a5ba7 100644
              print("[CameraPreview] captureImage callback received")
              DispatchQueue.main.async {
                  print("[CameraPreview] Processing capture on main thread")
-@@ -1337,6 +1356,7 @@ public class CameraPreview: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDelega
+@@ -1337,6 +1292,7 @@ public class CameraPreview: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDelega
  
                  var result = JSObject()
                  result["exif"] = exifData
@@ -170,3 +277,45 @@ index e01ebf7..25a5ba7 100644
  
                  if self.storeToFile == false {
                      let base64Image = imageDataWithExif.base64EncodedString()
+@@ -2086,7 +2042,6 @@ public class CameraPreview: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDelega
+         print("[CameraPreview] locationManager didUpdateLocations called, locations count: \(locations.count)")
+         self.currentLocation = locations.last
+         if let completion = locationCompletion {
+-            print("[CameraPreview] Calling location completion with location: \(self.currentLocation?.description ?? "nil")")
+             self.locationManager?.stopUpdatingLocation()
+             completion(self.currentLocation)
+             locationCompletion = nil
+@@ -2096,7 +2051,6 @@ public class CameraPreview: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDelega
+     }
+ 
+     public func locationManager(_ manager: CLLocationManager, didUpdateHeading newHeading: CLHeading) {
+-        print("[CameraPreview] locationManager didUpdateHeading: trueHeading=\(newHeading.trueHeading), magneticHeading=\(newHeading.magneticHeading), accuracy=\(newHeading.headingAccuracy)")
+         if newHeading.headingAccuracy >= 0 {
+             self.currentHeading = newHeading
+         }
+@@ -2637,13 +2591,22 @@ public class CameraPreview: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDelega
+         } else {
+             url = URL(fileURLWithPath: path)
+         }
+-        guard let fileURL = url else {
++        guard let fileURL = url, fileURL.isFileURL else {
+             call.reject("Invalid path")
+             return
+         }
++        let candidate = fileURL.standardizedFileURL.resolvingSymlinksInPath()
++        guard let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?
++            .standardizedFileURL.resolvingSymlinksInPath(),
++              candidate.deletingLastPathComponent().path == documentsDirectory.path,
++              candidate.lastPathComponent.hasPrefix("cpcp_video_"),
++              candidate.pathExtension.lowercased() == "mp4" else {
++            call.reject("Path is outside the camera recording directory")
++            return
++        }
+         do {
+-            if FileManager.default.fileExists(atPath: fileURL.path) {
+-                try FileManager.default.removeItem(at: fileURL)
++            if FileManager.default.fileExists(atPath: candidate.path) {
++                try FileManager.default.removeItem(at: candidate)
+                 call.resolve(["success": true])
+             } else {
+                 call.resolve(["success": false])

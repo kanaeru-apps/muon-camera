@@ -1,5 +1,12 @@
 'use strict';
 
+// Release builds do not write native errors, paths, or device details to the
+// console. Set this to true only in a local diagnostic build.
+const DEBUG_LOGS = false;
+function debugLog(message) {
+  if (DEBUG_LOGS) console.debug(message);
+}
+
 // ── State ──────────────────────────────────────────────
 let stream = null;
 let currentFacing = 'environment';
@@ -83,7 +90,7 @@ async function playShutterSound() {
     await ShutterSound.play();
     return true;
   } catch (e) {
-    console.error('Failed to play the app shutter sound', e);
+    debugLog('Failed to play the app shutter sound');
     showToast('撮影音の再生に失敗しました', 5000);
     return false;
   }
@@ -147,7 +154,7 @@ async function syncNativeFacingFromDevice() {
     if (activeDevice?.position === 'rear') currentFacing = 'environment';
   } catch (e) {
     // Keep the last known value on older plugin/device combinations.
-    console.warn('Unable to synchronize active camera position', e);
+    debugLog('Unable to synchronize active camera position');
   }
   return currentFacing;
 }
@@ -171,7 +178,7 @@ async function refreshNativeFlashTarget() {
     // Rear iPhones normally support torch. Preserve the prior behavior if the
     // capability query itself is unavailable.
     nativeFlashTarget = 'torch';
-    console.warn('Unable to read supported flash modes', e);
+    debugLog('Unable to read supported flash modes');
   }
   updateFlashUIForCamera();
   return nativeFlashTarget;
@@ -276,7 +283,7 @@ async function initCamera() {
     requestAnimationFrame(applyRatioBox);
 
   } catch (err) {
-    console.error(err);
+    debugLog('Unable to initialize the browser camera');
     showToast('カメラへのアクセスが許可されていません');
   }
 }
@@ -299,14 +306,14 @@ async function initNativeCamera() {
       nativeShutterSuppressionSupported = support?.supported === true;
     } catch (e) {
       nativeShutterSuppressionSupported = false;
-      console.warn('Unable to read shutter-sound suppression support', e);
+      debugLog('Unable to read shutter-sound suppression support');
     }
     try {
       const policy = await ShutterSound.getPlaybackPolicy();
       nativeShutterAlwaysAudible = policy?.alwaysAudible === true;
     } catch (e) {
       nativeShutterAlwaysAudible = false;
-      console.warn('Unable to read shutter-sound playback policy', e);
+      debugLog('Unable to read shutter-sound playback policy');
     }
     updateCaptureSoundStatus();
     // フラッシュはネイティブで制御。既定OFF。
@@ -346,7 +353,8 @@ async function initNativeCamera() {
       brightnessSlider.value = 0;
     }
   } catch (err) {
-    showToast('カメラの起動に失敗: ' + (err?.message || err), 8000);
+    debugLog('Native camera initialization failed');
+    showToast('カメラの起動に失敗しました', 8000);
   }
 }
 
@@ -416,6 +424,8 @@ async function captureNativePhoto() {
           quality: 100,
           photoQualityPrioritization: 'balanced',
           mirrorFrontCamera: currentFacing === 'user',
+          withExifLocation: false,
+          embedLocation: false,
           suppressShutterSound: true
         })
       : await CameraPreview.captureSample({
@@ -456,7 +466,8 @@ async function captureNativePhoto() {
     img.src = 'data:image/jpeg;base64,' + value;
   } catch (e) {
     await endFrontScreenFlash(frontScreenFlashActive);
-    showToast('撮影に失敗: ' + (e?.message || e), 6000);
+    debugLog('Native photo capture failed');
+    showToast('撮影に失敗しました', 6000);
   }
 }
 
@@ -840,7 +851,8 @@ async function startRecording() {
     } catch (e) {
       recState = 'idle';
       stopRecordingIndicator();
-      showToast('録画開始に失敗: ' + (e?.message || e), 6000);
+      debugLog('Native recording start failed');
+      showToast('録画を開始できませんでした', 6000);
     }
     return;
   }
@@ -878,7 +890,8 @@ async function stopRecording() {
       // stopRecordVideoの拒否は「録画がエラー終了した」or「既に録画していない」を意味する
       // （recStateガードで多重停止は起きないため、録画継続中の拒否は実質発生しない）。
       // 録画中UIのまま固まらないよう、失敗として終了処理する。
-      showToast('録画に失敗しました: ' + (e?.message || e), 6000);
+      debugLog('Native recording stop failed');
+      showToast('録画に失敗しました', 6000);
       onNativeRecordingFinished(null);
     }
     return;
@@ -923,7 +936,7 @@ function startRecordingIndicator() {
   cameraScreen.classList.add('recording-active');
   if (ShutterSound) {
     ShutterSound.setRecordingActive({ active: true }).catch(e => {
-      console.error('Failed to disable the idle timer while recording', e);
+      debugLog('Failed to disable the idle timer while recording');
       showToast('録画中の画面維持を有効にできませんでした', 5000);
     });
   }
@@ -941,7 +954,7 @@ function stopRecordingIndicator() {
   cameraScreen.classList.remove('recording-active');
   if (ShutterSound) {
     ShutterSound.setRecordingActive({ active: false }).catch(e => {
-      console.error('Failed to restore the idle timer after recording', e);
+      debugLog('Failed to restore the idle timer after recording');
     });
   }
 }
@@ -1051,7 +1064,8 @@ saveBtn.addEventListener('click', async () => {
       showToast('写真ライブラリに保存しました');
       returnToCamera();
     } catch (e) {
-      showToast('保存に失敗: ' + (e?.message || e), 8000);
+      debugLog('Native video save failed');
+      showToast('保存に失敗しました', 8000);
     }
     return;
   }
@@ -1066,7 +1080,8 @@ saveBtn.addEventListener('click', async () => {
       showToast('写真ライブラリに保存しました');
       returnToCamera(); // 保存後は自動でカメラに戻る
     } catch (e) {
-      showToast('保存に失敗: ' + (e?.message || e), 8000);
+      debugLog('Native photo save failed');
+      showToast('保存に失敗しました', 8000);
     }
     return;
   }
@@ -1090,7 +1105,7 @@ saveBtn.addEventListener('click', async () => {
 
   // ② iOS フォールバック：新タブで画像を開き長押し保存を案内
   if (isIOS) {
-    window.open(capturedUrl, '_blank');
+    window.open(capturedUrl, '_blank', 'noopener,noreferrer');
     showToast('画像を長押し →「写真に追加」で保存');
     return;
   }
@@ -1265,7 +1280,9 @@ viewfinder.addEventListener('touchmove', e => {
 // ネイティブアプリ(Capacitor)ではアセットをローカルから読むため不要で、
 // むしろ Cache First がアプリ更新後も古いJS/CSSを配信し続けるリスクがあるため登録しない。
 if (!isNativeApp && 'serviceWorker' in navigator) {
-  navigator.serviceWorker.register('./sw.js').catch(console.error);
+  navigator.serviceWorker.register('./sw.js').catch(() => {
+    debugLog('Service worker registration failed');
+  });
 }
 
 // ── Start ──────────────────────────────────────────────

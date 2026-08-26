@@ -30,8 +30,6 @@
 	<string>写真・動画の撮影にカメラを使用します。</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>動画撮影時の音声を録音するためにマイクを使用します。</string>
-	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>カメラライブラリとの互換性のため、撮影時に位置情報へのアクセスが必要になる場合があります。ZERO Cameraは位置情報を収集・保存しません。</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>撮影した写真・動画を写真ライブラリに保存するために使用します。</string>
 	<key>UILaunchStoryboardName</key>

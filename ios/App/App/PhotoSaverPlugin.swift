@@ -11,6 +11,9 @@ import Photos
  */
 @objc(PhotoSaverPlugin)
 public class PhotoSaverPlugin: CAPPlugin, CAPBridgedPlugin {
+    private let maxEncodedMediaSize = 96 * 1024 * 1024
+    private let maxDecodedMediaSize = 72 * 1024 * 1024
+
     public let identifier = "PhotoSaverPlugin"
     public let jsName = "PhotoSaver"
     public let pluginMethods: [CAPPluginMethod] = [
@@ -27,10 +30,16 @@ public class PhotoSaverPlugin: CAPPlugin, CAPBridgedPlugin {
             call.reject("Missing or invalid 'type' parameter (expected 'photo' or 'video')")
             return
         }
-        // ignoreUnknownCharacters: 改行・空白が混入していてもデコードできるようにする。
-        // 失敗時は受信した base64 長を返し、サイズ起因(bridge途中で切断)かを診断できるようにする。
-        guard let fileData = Data(base64Encoded: base64, options: [.ignoreUnknownCharacters]) else {
-            call.reject("デコード失敗(受信base64長=\(base64.count))")
+        guard base64.utf8.count <= maxEncodedMediaSize else {
+            call.reject("Media data is too large")
+            return
+        }
+        guard let fileData = Data(base64Encoded: base64), fileData.count <= maxDecodedMediaSize else {
+            call.reject("Invalid or oversized media data")
+            return
+        }
+        guard hasExpectedSignature(fileData, type: type) else {
+            call.reject("Media content does not match the declared type")
             return
         }
 
@@ -65,11 +74,14 @@ public class PhotoSaverPlugin: CAPPlugin, CAPBridgedPlugin {
             call.reject("Missing or invalid 'type' parameter")
             return
         }
-        let fileURL: URL
-        if path.hasPrefix("file://") {
-            fileURL = URL(string: path) ?? URL(fileURLWithPath: path)
-        } else {
-            fileURL = URL(fileURLWithPath: path)
+        guard let fileURL = validatedCaptureFileURL(path: path, type: type) else {
+            call.reject("File path is outside the camera capture directory")
+            return
+        }
+        let isRegularFile = (try? fileURL.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true
+        guard FileManager.default.fileExists(atPath: fileURL.path), isRegularFile else {
+            call.reject("Capture file does not exist or is not a regular file")
+            return
         }
 
         PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
@@ -81,11 +93,11 @@ public class PhotoSaverPlugin: CAPPlugin, CAPBridgedPlugin {
                     } else {
                         PHAssetChangeRequest.creationRequestForAssetFromImage(atFileURL: fileURL)
                     }
-                }) { success, error in
+                }) { success, _ in
                     if success {
                         call.resolve()
                     } else {
-                        call.reject("保存に失敗: \(error?.localizedDescription ?? "unknown error")")
+                        call.reject("写真ライブラリへの保存に失敗しました")
                     }
                 }
             case .denied, .restricted:
@@ -100,11 +112,11 @@ public class PhotoSaverPlugin: CAPPlugin, CAPBridgedPlugin {
         PHPhotoLibrary.shared().performChanges({
             let request = PHAssetCreationRequest.forAsset()
             request.addResource(with: .photo, data: data, options: nil)
-        }) { success, error in
+        }) { success, _ in
             if success {
                 call.resolve()
             } else {
-                call.reject("写真の保存に失敗: \(error?.localizedDescription ?? "unknown error")")
+                call.reject("写真の保存に失敗しました")
             }
         }
     }
@@ -117,19 +129,49 @@ public class PhotoSaverPlugin: CAPPlugin, CAPBridgedPlugin {
         do {
             try data.write(to: tmpURL)
         } catch {
-            call.reject("一時ファイル書き込み失敗: \(error.localizedDescription)")
+            call.reject("動画の一時ファイルを作成できませんでした")
             return
         }
 
         PHPhotoLibrary.shared().performChanges({
             PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: tmpURL)
-        }) { success, error in
+        }) { success, _ in
             try? FileManager.default.removeItem(at: tmpURL)
             if success {
                 call.resolve()
             } else {
-                call.reject("動画の保存に失敗: \(error?.localizedDescription ?? "unknown error")")
+                call.reject("動画の保存に失敗しました")
             }
         }
+    }
+
+    private func hasExpectedSignature(_ data: Data, type: String) -> Bool {
+        if type == "photo" {
+            return data.starts(with: [0xFF, 0xD8, 0xFF])
+        }
+        guard data.count >= 12 else { return false }
+        return data[4..<8].elementsEqual(Data("ftyp".utf8))
+    }
+
+    private func validatedCaptureFileURL(path: String, type: String) -> URL? {
+        let rawURL: URL
+        if path.hasPrefix("file://") {
+            guard let parsedURL = URL(string: path), parsedURL.isFileURL else { return nil }
+            rawURL = parsedURL
+        } else {
+            rawURL = URL(fileURLWithPath: path)
+        }
+
+        let candidate = rawURL.standardizedFileURL.resolvingSymlinksInPath()
+        let searchDirectory: FileManager.SearchPathDirectory = type == "video" ? .documentDirectory : .cachesDirectory
+        guard let baseDirectory = FileManager.default.urls(for: searchDirectory, in: .userDomainMask).first?
+            .standardizedFileURL.resolvingSymlinksInPath() else { return nil }
+
+        let expectedPrefix = type == "video" ? "cpcp_video_" : "cpcp_capture_"
+        let expectedExtension = type == "video" ? "mp4" : "jpg"
+        guard candidate.deletingLastPathComponent().path == baseDirectory.path,
+              candidate.lastPathComponent.hasPrefix(expectedPrefix),
+              candidate.pathExtension.lowercased() == expectedExtension else { return nil }
+        return candidate
     }
 }

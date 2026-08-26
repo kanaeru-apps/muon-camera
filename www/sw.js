@@ -1,8 +1,8 @@
-const CACHE_NAME = 'silent-camera-v16';
+const CACHE_NAME = 'silent-camera-v17';
 const ASSETS = [
   './index.html',
-  './css/style.css?v=16',
-  './js/app.js?v=16',
+  './css/style.css?v=17',
+  './js/app.js?v=17',
   './manifest.json',
   './icons/icon.svg'
 ];
@@ -24,6 +24,8 @@ self.addEventListener('activate', e => {
 });
 
 self.addEventListener('fetch', e => {
+  const requestUrl = new URL(e.request.url);
+  if (e.request.method !== 'GET' || requestUrl.origin !== self.location.origin) return;
   e.respondWith(
     caches.match(e.request).then(cached => cached || fetch(e.request))
   );
