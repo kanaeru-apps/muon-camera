@@ -1,6 +1,9 @@
 # Node
 node_modules/
 
+# 開発用の生成物（配布物には含めない）
+build-artifacts/
+
 # Local secrets and signing material
 .env
 .env.*

@@ -1,4 +1,5 @@
-// シャッター音のサンプルを5種類生成し、www/sound-samples/ に書き出す。
+// シャッター音のサンプルを5種類生成し、build-artifacts/sound-samples/ に書き出す。
+// www/ 配下は配布物になるため、開発用の試聴データは置かない。
 // ユーザーが試聴して選んだものを ios/App/App/shutter.wav として採用する。
 'use strict';
 
@@ -95,7 +96,7 @@ function writeWav(filePath, pcmData, sampleRate) {
   fs.writeFileSync(filePath, buffer);
 }
 
-const outDir = path.join(__dirname, '..', 'www', 'sound-samples');
+const outDir = path.join(__dirname, '..', 'build-artifacts', 'sound-samples');
 fs.mkdirSync(outDir, { recursive: true });
 
 // ── サンプル1: 一眼レフ風（ミラーアップ→シャッター→ミラーダウンの3段階、重厚） ──
