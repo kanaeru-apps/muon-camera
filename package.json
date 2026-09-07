@@ -8,13 +8,13 @@
     "postinstall": "patch-package && node -e \"require('fs').copyFileSync('node_modules/@capacitor/core/dist/capacitor.js', 'www/js/capacitor.js')\""
   },
   "dependencies": {
-    "@capacitor/core": "^8.5.0",
+    "@capacitor/core": "^8.5.1",
     "@capacitor/share": "^8.0.1",
     "@capgo/camera-preview": "^8.11.2"
   },
   "devDependencies": {
-    "@capacitor/cli": "^8.5.0",
-    "@capacitor/ios": "^8.5.0",
+    "@capacitor/cli": "^8.5.1",
+    "@capacitor/ios": "^8.5.1",
     "patch-package": "^8.0.1",
     "sharp": "^0.35.3"
   },
